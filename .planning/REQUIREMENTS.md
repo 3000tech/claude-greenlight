@@ -41,4 +41,19 @@
 
 ## Traceability
 
-(filled by roadmap)
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| VER-01 | Phase 1 | Pending |
+| VER-02 | Phase 1 | Pending |
+| SW-01 | Phase 2 | Pending |
+| SW-02 | Phase 2 | Pending |
+| SW-03 | Phase 2 | Pending |
+| ENG-01 | Phase 2 | Pending |
+| ENG-02 | Phase 2 | Pending |
+| ENG-03 | Phase 2 | Pending |
+| ENG-04 | Phase 2 | Pending |
+| ENG-05 | Phase 2 | Pending |
+| ENG-06 | Phase 2 | Pending |
+| FLIP-01 | Phase 3 | Pending |
+| FLIP-02 | Phase 3 | Pending |
+| FLIP-03 | Phase 3 | Pending |
