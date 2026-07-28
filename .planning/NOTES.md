@@ -78,6 +78,7 @@ auq-lock stays on as an additional source for the `needs_input` state
 2. `monitor.py` gains a `--state-files` mode to run in shadow mode alongside
    the legacy parsing, logging divergences over a few days of real usage
    (multi-container, long turns, permissions, AUQ, /resume, mid-turn kill).
+   The concrete case list lives in [TEST-MATRIX.md](TEST-MATRIX.md).
 3. Flip the default, delete the jsonl parsing code (expectation: the file
    shrinks by half). Rewrite `test_monitor.py` against state files — much
    easier to fixture than jsonl.
