@@ -1,0 +1,47 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/auq-lock.sh\" set", "timeout": 2}
+        ]
+      },
+      {
+        "hooks": [
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/working-lock.sh\" set", "timeout": 2}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/auq-lock.sh\" clear", "timeout": 2}
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/auq-lock.sh\" set", "timeout": 2}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/working-lock.sh\" set", "timeout": 2}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/auq-lock.sh\" clear", "timeout": 2},
+          {"type": "command", "command": "bash \"$HOME/.claude/hooks/working-lock.sh\" clear", "timeout": 2}
+        ]
+      }
+    ]
+  }
+}
