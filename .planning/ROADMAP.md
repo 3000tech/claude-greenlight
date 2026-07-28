@@ -26,7 +26,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. A logging hook is installed alongside the existing hooks and, during real sessions, every Claude Code hook event (name, relevant payload fields, timestamp, session_id) appears in `~/.claude/hook-events.log` without disturbing current monitor behavior.
   2. All 21 cases in TEST-MATRIX.md have been run live in the real Windows + container environment, with the "Verified" column filled in (date, CC version, outcome) for each — this step is user-assisted UAT, not agent-executable.
   3. A written hybrid verdict states whether hooks-only coverage is viable and, for every confirmed hook-silent case (candidates: AskUserQuestion, Esc interrupt, bg-task re-invocation, abandoned prompt, async work in flight), names the specific fallback mechanism that will cover it in Phase 2.
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Build `hooks/event-logger.sh` and register it on every documented hook event via `hooks/install.sh`, with removal path and tests (VER-01)
+- [ ] 01-02-PLAN.md — Write the 21-case live runbook `01-UAT.md` and make TEST-MATRIX.md ready to receive the verdict (VER-02, completed at human UAT)
 
 ### Phase 2: State Writer & Shadow Mode
 **Goal**: Hooks become the primary source of session state — writing one atomic state file per session on every lifecycle event — while the monitor runs a state-file engine in shadow mode next to the current parser, proving trustworthiness before anything user-visible changes.
@@ -57,6 +61,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Hook Coverage Verification | 0/TBD | Not started | - |
+| 1. Hook Coverage Verification | 0/2 | Planned | - |
 | 2. State Writer & Shadow Mode | 0/TBD | Not started | - |
 | 3. Flip to Default & Cleanup | 0/TBD | Not started | - |
