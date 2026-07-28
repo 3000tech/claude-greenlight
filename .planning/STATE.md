@@ -21,9 +21,9 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 ## Current Position
 
 Phase: 1 of 3 (Hook Coverage Verification)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-07-28 — ROADMAP.md and STATE.md created from REQUIREMENTS.md
+Plan: 0 of 2 in current phase (01-01 instrumentation, 01-02 runbook)
+Status: Planned — plans approved by plan-checker, ready to execute
+Last activity: 2026-07-28 — Phase 1 planned (CONTEXT, RESEARCH, 2 PLANs, checker approved); next: /gsd-execute-phase 1
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -78,5 +78,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-07-28
-Stopped at: Roadmap creation complete, ready to plan Phase 1
-Resume file: None
+Stopped at: Phase 1 fully planned (checkpoint handoff) — plans 01-01/01-02 approved, not yet executed
+Resume file: None — resume with `/gsd-execute-phase 1` on branch feat/hook-refactor
