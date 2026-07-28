@@ -4,6 +4,10 @@
 
 Per-session attention monitor for [Claude Code](https://claude.com/claude-code) — built for **Windows hosts running sessions inside WSL2 / Docker containers**.
 
+![Standard mode — session list with live state and Docker containers](docs/standard-mode.png)
+
+![Compact mode — one pill per session](docs/compact-mode.png)
+
 ## The problem
 
 You run several Claude Code sessions in parallel — each in its own Docker container — and switch between them while they work. Existing monitors watch local processes or rely on locally-registered hooks, so from Windows they can't see what happens inside the containers: session history at best, no live state, no "your turn" signal.
