@@ -71,7 +71,7 @@ Recent decisions affecting current work:
 - Hybrid model (hooks primary + targeted fallbacks), not hooks-only — pending live verification in Phase 1
 - Never big-bang: extend hooks → shadow mode → flip default — 3-phase roadmap follows this exactly
 - Preserve current async-work semantics (grey while bg shells/agents run) unless live data says otherwise
-- shell_tracker stays jsonl-based initially — badges are a v2 concern (V2-01)
+- ~~shell_tracker jsonl (V2-01)~~ SUPERSEDED 2026-07-29: badge unificato ◉N da background_tasks_count, shell_tracker eliminato — zero jsonl a regime dopo Phase 3
 - [Phase ?]: Used RESEARCH.md's 24-event fallback baseline for hooks/hook-events.json (no live docs fetch available this session); documented provenance + re-check caveat in install.sh header
 - [Phase ?]: event-logger.sh writes no line for a payload lacking hook_event_name (e.g. {}), treating it as a partial payload alongside empty/non-JSON/truncated stdin
 - [Phase ?]: install.sh --remove-logger sweeps all hooks.<Event> arrays generically rather than scoping to the current hook-events.json list, so it cleans up stale entries from any prior event-list version

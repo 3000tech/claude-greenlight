@@ -55,6 +55,7 @@ The monitor must keep telling the user *"this session needs you now"* reliably �
 | Hybrid model (hooks primary + targeted fallbacks), not hooks-only | Matrix cases #6/#8/#13/#17/#18 are suspected hook-silent; user's prior analysis agrees | — Pending live verification |
 | Never big-bang: extend hooks → shadow mode → flip default | Monitor is in daily use; divergence logging de-risks the flip | — Pending |
 | Preserve current async-work semantics (grey while bg shells/agents run) unless live data says otherwise | Matches existing tests and user expectations; `Stop`-flips-green would notify mid-work | — Pending |
+| Badge semplificati: unico contatore ◉N da `background_tasks_count`, shell_tracker jsonl eliminato (supersede V2-01) | Decisione utente 2026-07-29: dei badge guardava solo il contatore bg; il campo hook copre lo scopo originario senza jsonl | ✓ Decisa — entra nel design Phase 2 |
 | shell_tracker stays jsonl-based initially | Badges need tool-level payloads; rebuilding from PostToolUse is a later optimization | — Pending |
 
 ## Evolution
