@@ -30,8 +30,15 @@ HOOK_EVENTS_JSON = HOOKS_DIR / "hook-events.json"
 LOCK_PATTERN = r"working-lock\.sh|auq-lock\.sh"
 LOGGER_PATTERN = r"event-logger\.sh"
 
-if shutil.which("jq") is None:
-    raise unittest.SkipTest("jq is required to run hooks/event-logger.sh and is not on PATH")
+
+def setUpModule() -> None:
+    # unittest special-cases SkipTest raised from setUpModule (reported as a
+    # clean module-level skip, exit 0). Raising the same SkipTest at bare
+    # module-import time is NOT special-cased — it propagates as an ordinary
+    # exception through __import__ and aborts the whole run with a
+    # traceback and exit code 1. Keep the guard here, not at import time.
+    if shutil.which("jq") is None:
+        raise unittest.SkipTest("jq is required to run hooks/event-logger.sh and is not on PATH")
 
 
 # ---------------------------------------------------------------------------
