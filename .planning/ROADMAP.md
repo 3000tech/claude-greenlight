@@ -53,11 +53,21 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
+**Wave 1**
 
 - [ ] 02-01-PLAN.md — Tracer: a Stop hook event becomes an atomic state file, a shadow WAITING verdict and a divergence record, end to end (SW-01, SW-02, ENG-01, ENG-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-02-PLAN.md — Complete the D-08 event-to-state mapping, the background-task gate at turn end, and the state-writer teardown (SW-01, SW-02, SW-03, ENG-06)
 - [ ] 02-03-PLAN.md — Engine: full state-file derivation, heartbeat staleness plus docker liveness cross-check, hookless-container fallback (ENG-01, ENG-03, ENG-04, ENG-05, ENG-06)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 02-04-PLAN.md — Shadow mode: decisive episodic divergence records and the state-files diagnostic mode (ENG-01, ENG-02)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 02-05-PLAN.md — Live activation runbook 02-UAT.md and the blocking human-verify checkpoint (SW-03, ENG-02, ENG-03, ENG-05, ENG-06)
 
 ### Phase 3: Flip to Default & Cleanup
