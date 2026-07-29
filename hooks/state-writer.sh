@@ -48,11 +48,16 @@
 #     mid-session /compact re-fires SessionStart on the SAME session_id;
 #     writing idle here would blank a live working state and read
 #     downstream as a turn that ended)
-#   Stop                                     -> waiting (unconditionally
-#     until plan 02-02 Task 2 adds the background-task gate)
-#   SubagentStop, SessionEnd, any other/unregistered event name -> no write
-#     (Task 2 fills in SubagentStop's deliberate no-op and SessionEnd's
-#     unconditional removal; today they fall through the default case)
+#   Stop                                     -> waiting when
+#     background_tasks_count == 0, working when > 0 (case 17 — replaces
+#     shell_tracker-driven grey-while-async-work)
+#   SubagentStop                             -> no write, deliberate no-op
+#     (case 12 — can arrive AFTER the parent's Stop; writing here would move
+#     the verdict after the turn already ended)
+#   SessionEnd                               -> removes the state file,
+#     unconditionally, for every `reason` value (prunes /resume picker and
+#     /clear orphans, cases 10/11/14)
+#   any other/unregistered event name        -> no write
 #
 # `idle` is an internal writer state with no separate rendering: the engine
 # maps it to the same WAITING verdict as `waiting` and `needs_input`, per
@@ -85,11 +90,35 @@ esac
 state_dir="$HOME/.claude/monitor-state"
 mkdir -p "$state_dir"
 
-# Event-to-state mapping — the in-turn branches (D-08 verdict). Stop stays
-# unconditionally `waiting` here, exactly as the tracer left it; the
-# background-task gate, the SubagentStop no-op and the SessionEnd removal
-# are Task 2's scope. Every branch either resolves a `state` value for the
-# record builder below, or exits 0 without writing.
+# SessionEnd removes the state file unconditionally for every `reason`
+# value — this is the ONE branch that never reaches the record builder
+# below. Handled first, ahead of the state-resolution case, since it has no
+# `state` to resolve at all.
+if [ "$event" = "SessionEnd" ]; then
+  rm -f "$state_dir/$sid.json"
+  exit 0
+fi
+
+# Resolve background_tasks_count once, from the deny-list rule (RESEARCH
+# assumption A2): any entry whose status is NOT "completed" and NOT
+# "failed" still counts as in-flight, including an entry with no `status`
+# key at all. This single value feeds both the Stop gate below and the
+# record's background_tasks_count field, so the number that gates the
+# verdict and the number the future unified badge reads (D-09) can never
+# disagree. An absent/non-array background_tasks yields 0.
+background_tasks_count=$(jq '
+  [.background_tasks[]?
+    | select((.status // "running") != "completed" and (.status // "running") != "failed")]
+  | length
+' <<<"$payload" 2>/dev/null)
+case "$background_tasks_count" in
+  ''|*[!0-9]*) background_tasks_count=0 ;;
+esac
+
+# Event-to-state mapping — the full D-08 verdict set (see header comment).
+# Every branch either resolves a `state` value for the record builder below,
+# or exits 0 without writing. No branch ever reads background_tasks
+# descriptors past the count already resolved above.
 case "$event" in
   UserPromptSubmit)
     state="working"
@@ -111,7 +140,17 @@ case "$event" in
     state="idle"
     ;;
   Stop)
-    state="waiting"
+    if [ "$background_tasks_count" -gt 0 ]; then
+      state="working"
+    else
+      state="waiting"
+    fi
+    ;;
+  SubagentStop)
+    # Deliberate no-op: SubagentStop can arrive AFTER the parent's Stop
+    # (TEST-MATRIX case 12) — writing here would move the verdict after
+    # the turn already ended, the historical premature-transition bug.
+    exit 0
     ;;
   *)
     exit 0
@@ -129,6 +168,7 @@ line=$(jq -cn \
   --argjson payload "$payload" \
   --arg hostname "${HOSTNAME:-$(hostname 2>/dev/null || echo unknown)}" \
   --arg last_event "$event" \
+  --argjson background_tasks_count "$background_tasks_count" \
   '{
     state: $state,
     ts: $ts,
@@ -136,10 +176,7 @@ line=$(jq -cn \
     cwd: ($payload.cwd // ""),
     hostname: $hostname,
     last_event: $last_event,
-    background_tasks_count:
-      ([$payload.background_tasks[]?
-        | select((.status // "running") != "completed" and (.status // "running") != "failed")]
-       | length)
+    background_tasks_count: $background_tasks_count
   }' 2>/dev/null)
 jq_status=$?
 

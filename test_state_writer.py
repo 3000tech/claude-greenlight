@@ -451,5 +451,100 @@ class Goal5_EventToStateMapping(_HomeTestCase):
         self.assertFalse((_state_dir(self.home) / f"{sid}.json").exists())
 
 
+# ---------------------------------------------------------------------------
+# GOAL 6 — Turn end respects in-flight background work, subagents cannot
+# move the verdict, and session teardown prunes its own state file
+# ---------------------------------------------------------------------------
+
+class Goal6_TurnEndSemantics(_HomeTestCase):
+    def _stop(self, session_id: str, background_tasks=None) -> subprocess.CompletedProcess:
+        kwargs = {} if background_tasks is None else {"background_tasks": background_tasks}
+        return _run_state_writer(_payload(event="Stop", session_id=session_id, **kwargs), self.home)
+
+    def _read(self, session_id: str) -> dict:
+        return json.loads((_state_dir(self.home) / f"{session_id}.json").read_text(encoding="utf-8"))
+
+    def test_stop_with_empty_or_absent_background_tasks_produces_waiting(self):
+        for sid, bg in (("no-key", None), ("empty-array", [])):
+            with self.subTest(sid=sid):
+                result = self._stop(sid, background_tasks=bg)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = self._read(sid)
+                self.assertEqual(obj["state"], "waiting")
+                self.assertEqual(obj["background_tasks_count"], 0)
+
+    def test_stop_with_one_running_entry_produces_working_and_count_one(self):
+        sid = "one-running"
+        result = self._stop(sid, background_tasks=[{"status": "running"}])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = self._read(sid)
+        self.assertEqual(obj["state"], "working")
+        self.assertEqual(obj["background_tasks_count"], 1)
+
+    def test_stop_with_only_completed_and_failed_entries_produces_waiting_and_count_zero(self):
+        sid = "completed-and-failed"
+        result = self._stop(sid, background_tasks=[{"status": "completed"}, {"status": "failed"}])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = self._read(sid)
+        self.assertEqual(obj["state"], "waiting")
+        self.assertEqual(obj["background_tasks_count"], 0)
+
+    def test_stop_with_entry_missing_status_key_produces_working_and_count_one(self):
+        sid = "missing-status"
+        result = self._stop(sid, background_tasks=[{"id": "task-1"}])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = self._read(sid)
+        self.assertEqual(obj["state"], "working")
+        self.assertEqual(obj["background_tasks_count"], 1)
+
+    def test_subagent_stop_leaves_existing_state_file_byte_identical(self):
+        sid = "subagent-target"
+        self._stop(sid, background_tasks=[])
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        before = state_file.read_bytes()
+        self.assertEqual(json.loads(before)["state"], "waiting")
+
+        result = _run_state_writer(_payload(event="SubagentStop", session_id=sid), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        after = state_file.read_bytes()
+        self.assertEqual(before, after)
+
+    def test_session_end_removes_file_for_every_reason_value(self):
+        for reason in ("prompt_input_exit", "resume", "clear"):
+            with self.subTest(reason=reason):
+                sid = f"end-{reason}"
+                self._stop(sid, background_tasks=[])
+                state_file = _state_dir(self.home) / f"{sid}.json"
+                self.assertTrue(state_file.exists())
+
+                result = _run_state_writer(
+                    _payload(event="SessionEnd", session_id=sid, reason=reason), self.home,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(state_file.exists())
+
+    def test_session_end_for_absent_file_exits_zero_without_error(self):
+        result = _run_state_writer(
+            _payload(event="SessionEnd", session_id="never-existed", reason="prompt_input_exit"), self.home,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_background_task_descriptive_text_never_appears_in_state_file(self):
+        sid = "no-leak"
+        secret_marker = "SUPER-SECRET-COMMAND-rm-dash-rf-slash"
+        result = self._stop(sid, background_tasks=[
+            {"status": "running", "id": "bg-42", "command": secret_marker, "description": secret_marker},
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        raw = state_file.read_text(encoding="utf-8")
+        self.assertNotIn(secret_marker, raw)
+        self.assertNotIn("bg-42", raw)
+        obj = json.loads(raw)
+        self.assertEqual(obj["background_tasks_count"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
