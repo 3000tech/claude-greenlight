@@ -5,7 +5,7 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: State Writer & Shadow Mode
 status: planning
-stopped_at: "Phase 01 verified (human_needed) — next: live UAT via 01-UAT.md runbook in real environment"
+stopped_at: "Phase 1 chiusa (UAT 21/21, verdetto ibrido consegnato) — next: /gsd-discuss-phase 2"
 last_updated: "2026-07-29T14:01:35.397Z"
 last_activity: 2026-07-29
 last_activity_desc: Phase 01 complete, transitioned to Phase 2
@@ -23,7 +23,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-28)
 
 **Core value:** Keep telling the user "this session needs you now" reliably — stop breaking every time Claude Code changes its internal jsonl format; hook-derived state is correct by construction instead of guessed.
-**Current focus:** Phase 01 — hook-coverage-verification
+**Current focus:** Phase 2 — State Writer & Shadow Mode
 
 ## Current Position
 
@@ -80,11 +80,11 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- [minor/testing] Campagna ricertificazione hook per versione Claude Code (2026-07-29) — promuovere matrice+runbook fuori da .planning, fixture per versione, smoke ai major bump
 
 ### Blockers/Concerns
 
-- Phase 1's live TEST-MATRIX.md run (VER-02) requires the user's real Windows + Docker environment — cannot be completed by the agent alone; it's a user-assisted UAT checkpoint that Phase 2's fallback design depends on.
+- ~~UAT live Phase 1~~ COMPLETATA 2026-07-29 (campagna opportunistica, 17/21 campionati live, 0 issues): verdetto ibrido in TEST-MATRIX.md § 'Verdict to extract' — input diretto di Phase 2/ENG-06.
 - ~~Open question AUQ~~ RISOLTA 2026-07-29 live: AUQ emette PreToolUse+PermissionRequest (apertura) e PostToolUse (risposta) su cc 2.1.220 — vedi TEST-MATRIX caso 6.
 
 ## Deferred Items
@@ -98,5 +98,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-07-29T08:25:24.254Z
-Stopped at: Phase 01 verified (human_needed) — next: live UAT via 01-UAT.md runbook in real environment
+Stopped at: Phase 1 chiusa — verdetto ibrido consegnato; next: /gsd-discuss-phase 2
 Resume file: None
