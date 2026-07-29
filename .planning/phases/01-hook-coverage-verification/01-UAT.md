@@ -1,3 +1,20 @@
+---
+status: complete
+phase: 01-hook-coverage-verification
+source: [01-01-SUMMARY.md, 01-02-SUMMARY.md, 01-VERIFICATION.md]
+started: 2026-07-29T09:14:00Z
+updated: 2026-07-29T14:20:00Z
+summary:
+  total: 21
+  live_sampled: 17
+  confirmed: 13
+  partial: 4
+  dispositioned_by_design: 4   # 18 (V2-01), 19 (staleness), 20 (Phase 2 tests), 21 (migration bridge)
+  code_issues: 0
+mode: opportunistic-campaign   # conversational UAT run live 2026-07-29 on cc 2.1.220, user-driven triggers + agent-read log
+verdict: .planning/TEST-MATRIX.md "Verdict to extract" — compiled, zero fill-in slots left
+---
+
 # Phase 1 Live Runbook — 21-Case Hook Coverage Verification
 
 ## What this is, and why

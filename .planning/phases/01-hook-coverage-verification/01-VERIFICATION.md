@@ -1,14 +1,16 @@
 ---
 phase: 01-hook-coverage-verification
 verified: 2026-07-29T09:30:00Z
-status: human_needed
+status: passed
 score: 19/19 must-haves verified (agent-executable scope); VER-02 live matrix run is intentionally out of agent scope
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:
+
   - test: "Run the 21-case live matrix per .planning/phases/01-hook-coverage-verification/01-UAT.md in the real Windows + Docker environment: install the logger against the real $HOME, trigger each of the 21 TEST-MATRIX.md cases, fill the Verified column (date, CC version, outcome) for all 21 rows, and write the hybrid verdict into TEST-MATRIX.md's four verdict slots."
     expected: "All 21 rows have a non-blank, non-fabricated Verified entry; the verdict section states hooks-only viability, names a concrete fallback (auq-lock / shell_tracker / targeted jsonl peek / docker ps cross-check) for every confirmed hook-silent case, records the case-2 Stop-timing gap, and records the case-17 async-in-flight design decision. Then run the mandatory teardown (`bash hooks/install.sh --remove-logger` + delete `~/.claude/hook-events.log`)."
     why_human: "D-05 / ROADMAP success criterion 2 explicitly scopes this to user-assisted UAT — it requires `docker kill`, mid-turn Esc interrupts, multi-container races, and real Windows Claude Code sessions the agent cannot produce. This is also the direct input Phase 2's fallback design (ENG-06) depends on; Phase 2 should not start before it exists."
+
   - test: "Live smoke-check of the WR-03 flock-based size-guard fix under real concurrent hook firing (not just the 20-way synthetic test in test_event_logger.py)."
     expected: "hook-events.log parses cleanly line-by-line with no dropped lines around a truncation boundary during a real busy session."
     why_human: "Flagged explicitly in 01-REVIEW-FIX.md as needing human confirmation — lock-contention behavior can vary across filesystems/platforms (project runs inside Docker/WSL2), and no automated test can exhaustively prove absence of races under all real timing conditions."
