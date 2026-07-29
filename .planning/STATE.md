@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: state-writer-shadow-mode
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-07-29T15:34:05.970Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-07-29T15:49:37.149Z"
 last_activity: 2026-07-29
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 7
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 ## Current Position
 
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-07-29 — Phase 02 execution started
 
-Progress: [██████░░░░] 57%
+Progress: [███████░░░] 71%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [██████░░░░] 57%
 | Phase 01 P02 | 6min | 2 tasks | 3 files |
 | Phase 02 P01 | 13min | 2 tasks | 5 files |
 | Phase 02 P02 | 15min | 3 tasks | 2 files |
+| Phase 02 P03 | 14min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-02]: SessionStart(source=compact) exits without writing rather than writing idle, since /compact re-fires SessionStart on the SAME session_id mid-turn (TEST-MATRIX case 11)
 - [Phase ?]: [Phase 02-02]: SubagentStop is an explicit no-op branch (not a fall-through) since it can arrive after the parent's Stop (TEST-MATRIX case 12)
 - [Phase ?]: [Phase 02-02]: install.sh --remove-state-writer was already complete from plan 02-01; this plan only added the Goal7/Goal8 regression tests locking the SW-03 guarantee down
+- [Phase ?]: [Phase 02-03]: STATE_PROMPT_STALE_SEC set equal to legacy's USER_PROMPT_WORKING_SEC (90s) so the abandoned-prompt staleness window matches today's behavior exactly
+- [Phase ?]: [Phase 02-03]: hostname_to_label is a secondary label resolver (after sessionid_to_label) because docker exec cannot reach a paused container — without it the paused-stays-WORKING staleness branch would be unreachable
+- [Phase ?]: [Phase 02-03]: legacy_sessions migration bridge lives inside scan_state_files() itself, not caller-side, so --state-files diagnostic mode gets identical hookless-fallback behavior via an internal scan() call
 
 ### Pending Todos
 
@@ -106,6 +110,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-29T15:34:05.913Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-07-29T15:49:37.116Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None

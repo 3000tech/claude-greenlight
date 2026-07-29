@@ -17,9 +17,9 @@
 
 - [x] **ENG-01**: `monitor.py --state-files` derives session state from `monitor-state/` as primary source
 - [x] **ENG-02**: Shadow mode runs the state-file engine alongside legacy parsing and logs every divergence (session, tick, legacy verdict vs state-file verdict) without changing UI behavior
-- [ ] **ENG-03**: Stale sessions are detected via heartbeat silence plus `docker ps` cross-check; a killed container never leaves a forever-grey session
-- [ ] **ENG-04**: Corrupt, partial, or missing state files never crash the monitor; the session degrades to fallback or idle
-- [ ] **ENG-05**: Sessions from hookless containers remain visible via per-session legacy parsing fallback
+- [x] **ENG-03**: Stale sessions are detected via heartbeat silence plus `docker ps` cross-check; a killed container never leaves a forever-grey session
+- [x] **ENG-04**: Corrupt, partial, or missing state files never crash the monitor; the session degrades to fallback or idle
+- [x] **ENG-05**: Sessions from hookless containers remain visible via per-session legacy parsing fallback
 - [x] **ENG-06**: Verified hook-silent cases (per VER-02 verdict) are covered by targeted fallbacks; current async-work semantics (grey while bg shells/Monitors/agents run, badges intact) are preserved via shell_tracker
 
 ### Flip & Cleanup
@@ -50,9 +50,9 @@
 | SW-03 | Phase 2 | Complete |
 | ENG-01 | Phase 2 | Complete |
 | ENG-02 | Phase 2 | Complete |
-| ENG-03 | Phase 2 | Pending |
-| ENG-04 | Phase 2 | Pending |
-| ENG-05 | Phase 2 | Pending |
+| ENG-03 | Phase 2 | Complete |
+| ENG-04 | Phase 2 | Complete |
+| ENG-05 | Phase 2 | Complete |
 | ENG-06 | Phase 2 | Complete |
 | FLIP-01 | Phase 3 | Pending |
 | FLIP-02 | Phase 3 | Pending |
