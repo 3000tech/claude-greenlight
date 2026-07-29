@@ -15,6 +15,7 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -936,6 +937,168 @@ class Goal8_NotificationDebounce(unittest.TestCase):
         monitor.MonitorApp._check_transitions(app, [])  # session gone
         self.assertEqual(app._pending_notify, {})
         self.assertEqual(app.notifications, [])
+
+
+# ---------------------------------------------------------------------------
+# GOAL 9+ — Phase 2 state-file engine (shadow mode): scan_state_files()
+# ---------------------------------------------------------------------------
+
+class StateFileTestBase(unittest.TestCase):
+    """Wire a temp STATE_DIR into the monitor module for each test."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._orig_state_dir = monitor.STATE_DIR
+        monitor.STATE_DIR = self.root
+
+    def tearDown(self) -> None:
+        monitor.STATE_DIR = self._orig_state_dir
+        self._tmp.cleanup()
+
+    def _write_state(self, session_id: str, mtime: float | None = None,
+                      omit: tuple[str, ...] = (), **fields) -> Path:
+        record = {
+            "state": "waiting",
+            "ts": "2026-07-29T00:00:00Z",
+            "ts_ms": int(time.time() * 1000),
+            "cwd": "/workspace",
+            "hostname": "container-1",
+            "last_event": "Stop",
+            "background_tasks_count": 0,
+        }
+        record.update(fields)
+        for key in omit:
+            record.pop(key, None)
+        f = self.root / f"{session_id}.json"
+        f.write_text(json.dumps(record), encoding="utf-8")
+        if mtime is not None:
+            os.utime(f, (mtime, mtime))
+        return f
+
+
+class Goal9_StateFileVerdicts(StateFileTestBase):
+
+    def test_working_state_maps_to_working(self):
+        self._write_state("a", state="working")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual((s["status"], s["dot_color"], s["rank"]), ("WORKING", "#666", 2))
+
+    def test_waiting_state_maps_to_waiting(self):
+        self._write_state("a", state="waiting")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual((s["status"], s["dot_color"], s["rank"]), ("WAITING", "#4ade80", 1))
+
+    def test_needs_input_state_maps_to_waiting_green_no_new_color(self):
+        self._write_state("a", state="needs_input")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual((s["status"], s["dot_color"]), ("WAITING", "#4ade80"))
+
+    def test_idle_state_maps_to_waiting(self):
+        self._write_state("a", state="idle")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_unknown_state_value_defaults_to_waiting(self):
+        self._write_state("a", state="some-future-state")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_shadow_dict_carries_every_key_scan_emits(self):
+        self._write_state("a", state="working")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        scan_keys = {
+            "key", "name", "session_id", "encoded_dir", "dot", "dot_color",
+            "bg", "monitors", "agents", "status", "rank", "age", "mtime", "action",
+        }
+        self.assertTrue(scan_keys.issubset(s.keys()), s.keys())
+
+
+class Goal10_StateFileRobustness(StateFileTestBase):
+    """Nine broken-shape state files, each costing exactly one session —
+    the tick (and every other valid session) must survive all of them
+    (TEST-MATRIX case 20)."""
+
+    def _labels(self) -> dict[str, str]:
+        return {"keep": "L", "broken": "L"}
+
+    def test_invalid_json_drops_only_that_session(self):
+        self._write_state("keep", state="waiting")
+        (self.root / "broken.json").write_text("{not valid json", encoding="utf-8")
+        sessions = monitor.scan_state_files(sessionid_to_label=self._labels())
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_truncated_fragment_drops_only_that_session(self):
+        self._write_state("keep", state="waiting")
+        (self.root / "broken.json").write_text(
+            '{"state": "working", "ts_ms":', encoding="utf-8")
+        sessions = monitor.scan_state_files(sessionid_to_label=self._labels())
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_zero_byte_file_drops_only_that_session(self):
+        self._write_state("keep", state="waiting")
+        (self.root / "broken.json").write_text("", encoding="utf-8")
+        sessions = monitor.scan_state_files(sessionid_to_label=self._labels())
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_json_array_instead_of_object_drops_only_that_session(self):
+        self._write_state("keep", state="waiting")
+        (self.root / "broken.json").write_text("[1, 2, 3]", encoding="utf-8")
+        sessions = monitor.scan_state_files(sessionid_to_label=self._labels())
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_record_missing_state_key_resolves_to_waiting_default(self):
+        self._write_state("a", omit=("state",))
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_record_with_state_as_number_resolves_to_waiting_default(self):
+        self._write_state("a", state=42)
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_record_missing_ts_ms_falls_back_to_file_mtime(self):
+        old_mtime = time.time() - 120
+        self._write_state("a", omit=("ts_ms",), mtime=old_mtime)
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertAlmostEqual(s["age"], 120, delta=5)
+
+    def test_non_json_file_in_directory_is_ignored(self):
+        self._write_state("keep", state="waiting")
+        (self.root / "notes.txt").write_text("hello", encoding="utf-8")
+        sessions = monitor.scan_state_files(sessionid_to_label={"keep": "L"})
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_file_removed_between_glob_and_read_drops_only_that_session(self):
+        self._write_state("keep", state="waiting")
+        victim = self._write_state("victim", state="waiting")
+        real_stat = Path.stat
+
+        def flaky_stat(path_self, *a, **kw):
+            if path_self == victim:
+                if os.path.exists(victim):
+                    os.unlink(victim)
+                raise FileNotFoundError(victim)
+            return real_stat(path_self, *a, **kw)
+
+        with mock.patch.object(Path, "stat", flaky_stat):
+            sessions = monitor.scan_state_files(
+                sessionid_to_label={"keep": "L", "victim": "L"})
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_state_file_older_than_max_age_is_not_returned(self):
+        old_mtime = time.time() - monitor.MAX_AGE_SEC - 10
+        self._write_state("stale", state="waiting", mtime=old_mtime)
+        sessions = monitor.scan_state_files(sessionid_to_label={"stale": "L"})
+        self.assertEqual(sessions, [])
+
+    def test_state_file_older_than_prune_age_is_unlinked_fresh_one_survives(self):
+        old_mtime = time.time() - monitor.STATE_PRUNE_AGE_SEC - 10
+        old_path = self._write_state("ancient", state="waiting", mtime=old_mtime)
+        fresh_path = self._write_state("fresh", state="waiting")
+        monitor.scan_state_files(sessionid_to_label={"ancient": "L", "fresh": "L"})
+        self.assertFalse(old_path.exists())
+        self.assertTrue(fresh_path.exists())
 
 
 if __name__ == "__main__":

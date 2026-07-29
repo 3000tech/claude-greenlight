@@ -67,6 +67,25 @@ WORKING_LOCK_MAX_AGE_SEC = 3600
 # or notification directly, see select_render_sessions().
 STATE_DIR = Path.home() / ".claude" / "monitor-state"
 DIVERGENCE_LOG = Path.home() / ".claude" / "monitor-divergence.log"
+# A WORKING verdict whose heartbeat (record ts_ms) has gone silent this long
+# is treated as stale — the same "~10 min heartbeat silence" staleness
+# design D-06 keeps at today's behaviour, now driven by the state file
+# instead of jsonl mtimes. Covers the hook-silent Esc interrupt, the
+# permission-denial dead end and the killed container (TEST-MATRIX cases
+# 8, 5-deny, 9) once cross-checked against docker liveness.
+STATE_HEARTBEAT_STALE_SEC = 600
+# Shorter staleness window used only when the record's last_event is
+# UserPromptSubmit: a turn that dies before its first tool call has no
+# PostToolUse/PostToolBatch heartbeat to wait on, so it must not sit WORKING
+# for the full heartbeat window (TEST-MATRIX case 19, the abandoned
+# pre-tool prompt). Deliberately identical to legacy's
+# USER_PROMPT_WORKING_SEC so the abandoned-prompt window matches exactly.
+STATE_PROMPT_STALE_SEC = 90
+# Best-effort orphan cleanup for a state file SessionEnd never got the
+# chance to remove — the one hook-silent path is a killed container
+# (RESEARCH Pitfall 10). 24h is far past MAX_AGE_SEC's one-hour visibility
+# window, so pruning can never remove a file the engine would still show.
+STATE_PRUNE_AGE_SEC = 86400
 # Optional launcher-registry integration: a shell script with a PROJECTS=( ... )
 # array (label|... entries) that controls project naming and display order.
 # Point CLAUDE_LAUNCHER_SH at it; without it, labels fall back to path segments.
@@ -462,13 +481,55 @@ def _state_to_status(state: str | None) -> tuple[str, str, str, int]:
     `working` -> WORKING (grey, "#666", rank 2). `waiting`, `needs_input`
     (D-07: identical to turn-end green, no new color) and `idle` all ->
     WAITING (green, "#4ade80", rank 1) — legacy's exact WAITING colour. Any
-    unknown or missing value also -> WAITING, matching legacy's
-    default-green posture (scan() only flips to WORKING on unambiguous
-    evidence).
+    unknown, missing, or wrong-typed value (a record whose `state` is a
+    number, say) also -> WAITING, matching legacy's default-green posture
+    (scan() only flips to WORKING on unambiguous evidence) and giving
+    Task 1's malformed-record robustness a free ride: a bad `state` value
+    just never equals the string "working".
     """
     if state == "working":
         return "WORKING", "●", "#666", 2
     return "WAITING", "●", "#4ade80", 1
+
+
+# Compact per-event labels for the shadow list's `action` column — the
+# diagnostic-mode equivalent of legacy's parse_last_action() jsonl-tail
+# label, derived from the state file's own last_event instead.
+_STATE_ACTION_LABELS = {
+    "SessionStart": "session start",
+    "UserPromptSubmit": "prompt",
+    "PreToolUse": "tool start",
+    "PostToolUse": "tool done",
+    "PostToolUseFailure": "tool failed",
+    "PostToolBatch": "tool batch",
+    "PermissionRequest": "permission",
+    "Notification": "notify",
+    "Stop": "turn end",
+    "SubagentStop": "subagent",
+    "SessionEnd": "session end",
+}
+
+
+def _state_action_label(last_event: object) -> str:
+    """Best-effort, never-raise label for an arbitrary `last_event` value —
+    a known event name maps to a short phrase, an unrecognised string is
+    shown as-is, anything else (missing, wrong type) is blank."""
+    if not isinstance(last_event, str) or not last_event:
+        return ""
+    return _STATE_ACTION_LABELS.get(last_event, last_event)
+
+
+def _state_record_age(obj: dict, mtime: float, now: float) -> float:
+    """Age of a state record, preferring its own `ts_ms` over the file's
+    mtime when `ts_ms` is a usable number — the file mtime is always
+    trustworthy (it can't be corrupted by a half-written record, since the
+    writer's tmp+rename only ever commits a complete file) but `ts_ms` is
+    the more precise signal when present and well-formed.
+    """
+    ts_ms = obj.get("ts_ms")
+    if isinstance(ts_ms, (int, float)) and ts_ms > 0:
+        return now - (ts_ms / 1000.0)
+    return now - mtime
 
 
 def scan_state_files(label_map: dict[str, str] | None = None,
@@ -484,27 +545,56 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     reproducing today's labels); state files always carry a real
     session_id (the filename stem), so only `sessionid_to_label` is
     actually consulted here.
+
+    Degrades one session at a time, never the whole tick (TEST-MATRIX case
+    20): a directory-listing failure returns an empty list, a single file's
+    stat/read failure — including the file vanishing between the listing
+    and the read, an inherent race against the writer's own tmp+rename —
+    drops only that session, and a record missing or misshaping any field
+    still yields a usable (if defensively-defaulted) session.
+
+    Also prunes state files this engine will never show again:
+    SessionEnd already removes a file on every clean exit/resume/clear, so
+    this best-effort sweep only ever catches the one hook-silent path — a
+    killed container — well after MAX_AGE_SEC has already hidden it
+    (STATE_PRUNE_AGE_SEC, 24h, is 24x the one-hour visibility window).
     """
     if not STATE_DIR.is_dir():
         return []
     now = time.time()
+    try:
+        entries = list(STATE_DIR.glob("*.json"))
+    except OSError:
+        return []
     sessions = []
-    for f in STATE_DIR.glob("*.json"):
+    for f in entries:
         session_id = f.stem
-        obj = _read_state_file(f)
-        if obj is None:
-            continue
         try:
             mtime = f.stat().st_mtime
         except OSError:
             continue
-        age = now - mtime
-        if age > MAX_AGE_SEC:
+        age_by_mtime = now - mtime
+        if age_by_mtime > STATE_PRUNE_AGE_SEC:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+            continue
+        if age_by_mtime > MAX_AGE_SEC:
+            continue
+        obj = _read_state_file(f)
+        if obj is None:
             continue
         name = sessionid_to_label.get(session_id) if sessionid_to_label else None
         if name is None:
             continue
-        status, dot, color, rank = _state_to_status(obj.get("state"))
+        age = _state_record_age(obj, mtime, now)
+        state_val = obj.get("state")
+        last_event = obj.get("last_event")
+        status, dot, color, rank = _state_to_status(state_val)
+        bg_count = obj.get("background_tasks_count")
+        if not isinstance(bg_count, (int, float)):
+            bg_count = None
         sessions.append({
             "key": session_id,
             "name": name,
@@ -512,18 +602,18 @@ def scan_state_files(label_map: dict[str, str] | None = None,
             "encoded_dir": "",
             "dot": dot,
             "dot_color": color,
-            "bg": False,
+            "bg": bool(bg_count and bg_count > 0),
             "monitors": 0,
             "agents": 0,
             "status": status,
             "rank": rank,
             "age": age,
             "mtime": mtime,
-            "action": "",
-            "state": obj.get("state"),
-            "last_event": obj.get("last_event"),
+            "action": _state_action_label(last_event),
+            "state": state_val,
+            "last_event": last_event,
             "hostname": obj.get("hostname"),
-            "background_tasks_count": obj.get("background_tasks_count"),
+            "background_tasks_count": bg_count,
         })
     order = launcher_order()
     big = len(order) + 1
