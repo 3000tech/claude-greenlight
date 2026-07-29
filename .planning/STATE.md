@@ -1,12 +1,19 @@
 ---
-gsd_state_version: '1.0'
-status: planning
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 01
+current_phase_name: hook-coverage-verification
+status: executing
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-07-29T08:17:51.475Z"
+last_activity: 2026-07-29
+last_activity_desc: Phase 01 execution started
 progress:
-  total_phases: 3
+  total_phases: 1
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
 ---
 
 # Project State
@@ -16,20 +23,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-28)
 
 **Core value:** Keep telling the user "this session needs you now" reliably — stop breaking every time Claude Code changes its internal jsonl format; hook-derived state is correct by construction instead of guessed.
-**Current focus:** Phase 1 — Hook Coverage Verification
+**Current focus:** Phase 01 — hook-coverage-verification
 
 ## Current Position
 
-Phase: 1 of 3 (Hook Coverage Verification)
-Plan: 0 of 2 in current phase (01-01 instrumentation, 01-02 runbook)
-Status: Planned — plans approved by plan-checker, ready to execute
-Last activity: 2026-07-28 — Phase 1 planned (CONTEXT, RESEARCH, 2 PLANs, checker approved); next: /gsd-execute-phase 1
+Phase: 01 (hook-coverage-verification) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-07-29 — Phase 01 execution started
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: - min
 - Total execution time: 0 hours
@@ -41,10 +49,16 @@ Progress: [░░░░░░░░░░] 0%
 | - | - | - | - |
 
 **Recent Trend:**
+
 - Last 5 plans: -
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 8min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -57,6 +71,9 @@ Recent decisions affecting current work:
 - Never big-bang: extend hooks → shadow mode → flip default — 3-phase roadmap follows this exactly
 - Preserve current async-work semantics (grey while bg shells/agents run) unless live data says otherwise
 - shell_tracker stays jsonl-based initially — badges are a v2 concern (V2-01)
+- [Phase ?]: Used RESEARCH.md's 24-event fallback baseline for hooks/hook-events.json (no live docs fetch available this session); documented provenance + re-check caveat in install.sh header
+- [Phase ?]: event-logger.sh writes no line for a payload lacking hook_event_name (e.g. {}), treating it as a partial payload alongside empty/non-JSON/truncated stdin
+- [Phase ?]: install.sh --remove-logger sweeps all hooks.<Event> arrays generically rather than scoping to the current hook-events.json list, so it cleans up stale entries from any prior event-list version
 
 ### Pending Todos
 
@@ -77,6 +94,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-28
-Stopped at: Phase 1 fully planned (checkpoint handoff) — plans 01-01/01-02 approved, not yet executed
-Resume file: None — resume with `/gsd-execute-phase 1` on branch feat/hook-refactor
+Last session: 2026-07-29T08:17:51.453Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None
