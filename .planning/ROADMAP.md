@@ -50,7 +50,7 @@ Plans:
   4. Shadow mode runs the state-file engine alongside legacy parsing during real usage and logs every divergence (session, tick, legacy verdict vs. state-file verdict) without changing what the user sees in the overlay.
   5. Sessions from hookless containers stay visible via per-session legacy-parsing fallback, and every hook-silent case named in Phase 1's verdict is covered by its designated fallback — including current async-work semantics (grey while bg shells/Monitors/agents run) and shell_tracker badges staying intact.
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -64,7 +64,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — Shadow mode: decisive episodic divergence records and the state-files diagnostic mode (ENG-01, ENG-02)
+- [x] 02-04-PLAN.md — Shadow mode: decisive episodic divergence records and the state-files diagnostic mode (ENG-01, ENG-02)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -91,5 +91,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Hook Coverage Verification | 2/2 | Complete    | 2026-07-29 |
-| 2. State Writer & Shadow Mode | 3/5 | In Progress|  |
+| 2. State Writer & Shadow Mode | 4/5 | In Progress|  |
 | 3. Flip to Default & Cleanup | 0/TBD | Not started | - |
