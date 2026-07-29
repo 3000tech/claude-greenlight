@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 01
 current_phase_name: hook-coverage-verification
-status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-07-29T08:17:51.475Z"
+status: verifying
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-07-29T08:25:24.276Z"
 last_activity: 2026-07-29
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 
 Phase: 01 (hook-coverage-verification) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-29 — Phase 01 execution started
 
-Progress: [█████░░░░░] 50%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [█████░░░░░] 50%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 8min | 3 tasks | 5 files |
+| Phase 01 P02 | 6min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Used RESEARCH.md's 24-event fallback baseline for hooks/hook-events.json (no live docs fetch available this session); documented provenance + re-check caveat in install.sh header
 - [Phase ?]: event-logger.sh writes no line for a payload lacking hook_event_name (e.g. {}), treating it as a partial payload alongside empty/non-JSON/truncated stdin
 - [Phase ?]: install.sh --remove-logger sweeps all hooks.<Event> arrays generically rather than scoping to the current hook-events.json list, so it cleans up stale entries from any prior event-list version
+- [Phase ?]: [Phase 01-02]: Every jq field/event in 01-UAT.md was grounded against the real hooks/event-logger.sh and hooks/hook-events.json (plan 01-01), not RESEARCH.md doc-fetch prose, and mechanically verified by the plan's <verify> gate
+- [Phase ?]: [Phase 01-02]: TEST-MATRIX.md rows 6 (AskUserQuestion) and 8 (Esc interrupt) pre-filled with research-confirmed answers (issues 28273, 12605, 15872, 9516) but Verified column left empty pending live confirmation on the tester's Claude Code version
 
 ### Pending Todos
 
@@ -94,6 +97,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-29T08:17:51.453Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-07-29T08:25:24.254Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
