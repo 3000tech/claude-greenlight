@@ -85,7 +85,7 @@ None yet.
 ### Blockers/Concerns
 
 - Phase 1's live TEST-MATRIX.md run (VER-02) requires the user's real Windows + Docker environment — cannot be completed by the agent alone; it's a user-assisted UAT checkpoint that Phase 2's fallback design depends on.
-- Open question from NOTES.md: does AskUserQuestion emit any hook event at all? Unresolved until Phase 1's live verification.
+- ~~Open question AUQ~~ RISOLTA 2026-07-29 live: AUQ emette PreToolUse+PermissionRequest (apertura) e PostToolUse (risposta) su cc 2.1.220 — vedi TEST-MATRIX caso 6.
 
 ## Deferred Items
 
