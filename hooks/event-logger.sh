@@ -12,10 +12,17 @@
 #
 # Captured by value: identity/scalar metadata only (ts, ts_ms, event,
 # session_id, cwd, source, reason, trigger, matcher, permission_mode,
-# tool_name, tool_use_id, notification_type, message, agent_type, agent_id,
+# tool_name, tool_use_id, notification_type, agent_type, agent_id,
 # subagent_type, task_id, stop_hook_active) plus `keys`, the payload's own
 # top-level field names — which answers "what fields does this event carry
 # and what are they called" without logging any of their values.
+#
+# `message` (Notification's payload field) is captured by default but
+# truncated to 200 characters, since its exact content shape was never
+# confirmed against live docs before this instrument was written and it may
+# echo back contentful text depending on notification type. The full,
+# untruncated value is only ever written under GREENLIGHT_LOG_RAW=1 (see
+# escape hatch below).
 #
 # Deliberately NOT captured by value: tool_input, tool_response/tool_output,
 # prompt, last_assistant_message, or any other content-bearing field. These
@@ -67,13 +74,20 @@ line=$(jq -c --arg raw_flag "$RAW_FLAG" '
       tool_name,
       tool_use_id,
       notification_type,
-      message,
       agent_type,
       agent_id,
       subagent_type,
       task_id,
       stop_hook_active
     }
+    + (
+        if .message == null then {}
+        elif ($raw_flag == "1") then {message: .message}
+        elif (.message | type) == "string" and (.message | length) > 200 then
+          {message: (.message[0:200] + "…[truncated]")}
+        else {message: .message}
+        end
+      )
     + (if $raw_flag == "1" then {raw: $payload} else {} end)
     | with_entries(select(.value != null))
   )

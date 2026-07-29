@@ -218,6 +218,41 @@ class Goal2_SecretExclusionAndRawOptIn(_HomeTestCase):
         [line] = _read_log_lines(self.home)
         self.assertNotIn("raw", line)
 
+    def test_long_notification_message_truncated_to_200_chars_by_default(self):
+        long_message = "a" * 300
+        payload = _payload(
+            event="Notification", session_id="s6", cwd="/w",
+            notification_type="permission_prompt", message=long_message,
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertIn("message", line)
+        self.assertLessEqual(len(line["message"]), 220)
+        self.assertTrue(line["message"].startswith("a" * 200))
+        self.assertNotEqual(line["message"], long_message)
+
+    def test_short_notification_message_passes_through_untruncated(self):
+        payload = _payload(
+            event="Notification", session_id="s7", cwd="/w",
+            notification_type="permission_prompt", message="short message",
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertEqual(line["message"], "short message")
+
+    def test_raw_optin_preserves_full_untruncated_message(self):
+        long_message = "b" * 300
+        payload = _payload(
+            event="Notification", session_id="s8", cwd="/w",
+            notification_type="permission_prompt", message=long_message,
+        )
+        result = _run_logger(payload, self.home, raw=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertEqual(line["message"], long_message)
+
 
 # ---------------------------------------------------------------------------
 # GOAL 3 — A logger failure can never break or slow a Claude Code session
