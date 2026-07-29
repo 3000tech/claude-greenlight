@@ -11,14 +11,17 @@
 #   event-logger.sh  Phase 1 diagnostic instrument (see hooks/hook-events.json)
 #                    → appends one JSONL line per hook event to
 #                    ~/.claude/hook-events.log. Registered on every event name
-#                    listed in hooks/hook-events.json, which currently draws
-#                    from code.claude.com/docs/en/hooks (fetched 2026-07-28)
-#                    with a RESEARCH.md-derived fallback baseline if that page
-#                    cannot be reached. Registering on an event name a given
-#                    Claude Code build does not know is expected to be inert —
-#                    not a defect. Diagnostic-only, disposable: run this
-#                    script with `--remove-logger` to strip every logger
-#                    entry from settings.json (and then delete
+#                    listed in hooks/hook-events.json — 24 names, the
+#                    RESEARCH.md baseline (2026-07-28), used because a live
+#                    fetch of code.claude.com/docs/en/hooks was not available
+#                    from this execution session. Re-check that list against
+#                    the live docs before treating "no line for event X" as a
+#                    confirmed negative finding rather than a catalog gap.
+#                    Registering on an event name a given Claude Code build
+#                    does not know is expected to be inert — not a defect.
+#                    Diagnostic-only, disposable: run this script with
+#                    `--remove-logger` to strip every logger entry from
+#                    settings.json (and then delete
 #                    ~/.claude/hooks/event-logger.sh / hook-events.log
 #                    yourself) once the Phase 1 UAT concludes.
 #
