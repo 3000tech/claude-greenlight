@@ -278,6 +278,41 @@ class Goal4_AppendAndSizeGuard(_HomeTestCase):
         appended = json.loads(raw_lines[1])
         self.assertEqual(appended["session_id"], "after-truncate")
 
+    def test_concurrent_invocations_racing_the_size_guard_lose_no_lines(self):
+        """Regression test for WR-03: many event-logger.sh invocations firing
+        at once against an already-oversized log must not have their lines
+        wiped by a second, racing truncation. flock serializes the
+        check-truncate-append critical section."""
+        claude_dir = self.home / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        log = _log_path(self.home)
+        with open(log, "w", encoding="utf-8") as f:
+            f.write("x" * (6 * 1024 * 1024) + "\n")
+
+        n = 20
+        procs = [
+            subprocess.Popen(
+                ["bash", str(EVENT_LOGGER_SH)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env=_base_env(self.home),
+                text=True,
+            )
+            for _ in range(n)
+        ]
+        for i, p in enumerate(procs):
+            p.stdin.write(_payload(session_id=f"race-{i}"))
+            p.stdin.close()
+        for p in procs:
+            self.assertEqual(p.wait(timeout=15), 0, p.stderr.read())
+            p.stderr.close()
+
+        lines = _read_log_lines(self.home)
+        session_ids = {ln.get("session_id") for ln in lines if "session_id" in ln}
+        expected = {f"race-{i}" for i in range(n)}
+        self.assertEqual(session_ids, expected)
+
 
 # ---------------------------------------------------------------------------
 # GOAL 5 — install.sh registers the logger on every event, idempotently

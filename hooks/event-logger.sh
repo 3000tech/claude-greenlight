@@ -93,25 +93,37 @@ mkdir -p "$LOG_DIR"
 
 # Size guard: truncate before the next append if the log has grown past the
 # threshold, leaving a marker line so truncation is never read as missing
-# events.
-if [ -f "$LOG" ]; then
-  log_size=$(stat -c%s "$LOG" 2>/dev/null)
-  if [ -z "$log_size" ]; then
-    log_size=0
-  fi
-  if [ "$log_size" -gt "$MAX_BYTES" ]; then
-    : > "$LOG"
-    marker=$(jq -cn --arg ts "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" '
-      {ts: $ts, event: "_truncated", note: "hook-events.log exceeded 5MB and was truncated before this line"}
-    ' 2>/dev/null)
-    if [ -n "$marker" ]; then
-      printf '%s\n' "$marker" >> "$LOG"
+# events. The check-truncate-append sequence is serialized with a short-wait
+# flock on a lock file derived from $LOG so two invocations racing past the
+# threshold can't both truncate and wipe each other's lines. If the lock
+# can't be acquired quickly, we deliberately skip the truncation this round
+# (rather than block) and still append — never hang a Claude Code session
+# over a diagnostic log.
+(
+  if flock -w 0.5 9 2>/dev/null; then
+    if [ -f "$LOG" ]; then
+      log_size=$(stat -c%s "$LOG" 2>/dev/null)
+      if [ -z "$log_size" ]; then
+        log_size=0
+      fi
+      if [ "$log_size" -gt "$MAX_BYTES" ]; then
+        : > "$LOG"
+        marker=$(jq -cn --arg ts "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" '
+          {ts: $ts, event: "_truncated", note: "hook-events.log exceeded 5MB and was truncated before this line"}
+        ' 2>/dev/null)
+        if [ -n "$marker" ]; then
+          printf '%s\n' "$marker" >> "$LOG"
+        fi
+      fi
     fi
   fi
-fi
-
-if [ -n "$line" ]; then
-  printf '%s\n' "$line" >> "$LOG"
-fi
+  if [ -n "$line" ]; then
+    printf '%s\n' "$line" >> "$LOG"
+  fi
+) 9>"$LOG.lock" 2>/dev/null || {
+  if [ -n "$line" ]; then
+    printf '%s\n' "$line" >> "$LOG"
+  fi
+}
 
 exit 0
