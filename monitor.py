@@ -1,4 +1,15 @@
-"""Claude Code session monitor — always-on-top overlay for Windows."""
+"""Claude Code session monitor — always-on-top overlay for Windows.
+
+Phase 2 (state-writer-shadow-mode): a second, hook-derived verdict engine
+(scan_state_files()) runs alongside the legacy jsonl-parsing engine (scan())
+on every tick, and disagreements between them are logged to DIVERGENCE_LOG
+for later review — but during normal operation the overlay, notifications
+and Telegram push are still driven exclusively by the legacy engine (D-01).
+Launch with `--state-files` (see state_files_mode()) to render and notify
+from the state-file engine instead, for hands-on verification of the new
+engine including its notification behaviour; without the flag, this file
+behaves exactly as it did before Phase 2.
+"""
 from __future__ import annotations
 
 import json
@@ -67,6 +78,10 @@ WORKING_LOCK_MAX_AGE_SEC = 3600
 # or notification directly, see select_render_sessions().
 STATE_DIR = Path.home() / ".claude" / "monitor-state"
 DIVERGENCE_LOG = Path.home() / ".claude" / "monitor-divergence.log"
+# Size guard for DIVERGENCE_LOG, mirroring the 5MB threshold
+# hooks/event-logger.sh already established for hook-events.log on the same
+# shared 9p mount (T-02-18). See write_divergences() below.
+DIVERGENCE_LOG_MAX_BYTES = 5 * 1024 * 1024
 # A WORKING verdict whose heartbeat (record ts_ms) has gone silent this long
 # is treated as stale — the same "~10 min heartbeat silence" staleness
 # design D-06 keeps at today's behaviour, now driven by the state file
@@ -675,13 +690,25 @@ def scan_state_files(label_map: dict[str, str] | None = None,
 
 def diff_verdicts(legacy: list[dict], shadow: list[dict], tick: float) -> list[dict]:
     """Pure comparison, no I/O. Emits one record per session `key` whose
-    legacy and shadow `status` disagree; an empty list when everything
-    agrees. Records are sorted by `key` so the divergence log reads stable
-    across ticks.
+    legacy and shadow `status` disagree, compared over the UNION of both
+    engines' keys — not the intersection — because a session one engine
+    sees and the other does not is itself one of the most informative
+    divergences there is (a paused container the shadow engine keeps and
+    legacy drops, or a session one engine picks up a tick earlier). The
+    missing side's verdict is represented as the string "ABSENT". Two lists
+    that agree completely, and two empty lists, both yield an empty list.
+    Records are sorted by `key` so the divergence log reads stable and
+    diffable across ticks.
 
     Field shape carries everything D-04 requires to judge which side was
-    right during review: session, tick, both verdicts, the state-file
-    engine's last hook event, and its raw `state` value.
+    right during review: both verdicts, the state-file engine's context
+    (`state`, `last_event`, `hostname`, `background_tasks_count`, `age_sec`)
+    and a compact `legacy_evidence` string assembled only from safe,
+    non-content legacy signals — the tool-name-only `action` label, the two
+    lock booleans, the `bg`/`monitors`/`agents` counts and the age — never
+    prompt text, tool input or tool output (T-02-17). No field here
+    classifies which side was correct: D-04 keeps that judgment in the
+    review conversation, not in code that could quietly steer it.
     """
     legacy_by_key = {s["key"]: s for s in legacy}
     shadow_by_key = {s["key"]: s for s in shadow}
@@ -694,6 +721,18 @@ def diff_verdicts(legacy: list[dict], shadow: list[dict], tick: float) -> list[d
         if legacy_status == shadow_status:
             continue
         ref = l or s
+        if l is None:
+            legacy_evidence = "ABSENT"
+        else:
+            legacy_evidence = (
+                f"action={l.get('action', '')} "
+                f"working_locked={l.get('working_locked', False)} "
+                f"auq_locked={l.get('auq_locked', False)} "
+                f"bg={l.get('bg', False)} "
+                f"monitors={l.get('monitors', 0)} "
+                f"agents={l.get('agents', 0)} "
+                f"age={l.get('age', 0):.0f}s"
+            )
         records.append({
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tick)),
             "ts_ms": int(tick * 1000),
@@ -701,27 +740,115 @@ def diff_verdicts(legacy: list[dict], shadow: list[dict], tick: float) -> list[d
             "key": key,
             "session_id": ref.get("session_id"),
             "name": ref.get("name"),
-            "legacy_verdict": legacy_status,
-            "state_file_verdict": shadow_status,
+            "legacy_verdict": legacy_status if l is not None else "ABSENT",
+            "state_file_verdict": shadow_status if s is not None else "ABSENT",
             "state": s.get("state") if s else None,
             "last_event": s.get("last_event") if s else None,
+            "hostname": s.get("hostname") if s else None,
+            "background_tasks_count": s.get("background_tasks_count") if s else None,
+            "age_sec": s.get("age") if s else None,
+            "legacy_evidence": legacy_evidence,
         })
     records.sort(key=lambda r: r["key"])
     return records
 
 
-def write_divergences(records: list[dict]) -> None:
-    """Append one JSON line per divergence record to DIVERGENCE_LOG.
+def filter_divergence_events(records: list[dict], prev: dict[str, dict] | None,
+                              tick: float) -> tuple[list[dict], dict[str, dict]]:
+    """Collapse a persisting disagreement to one `diverged` event when it
+    opens and one `resolved` event when it closes, instead of one identical
+    line every tick (D-02). Pure function — no I/O, no tkinter — so it is
+    testable on its own; the caller (MonitorApp.refresh()) holds `prev` on
+    `self._divergence_state` and threads it through each tick.
 
-    Wrapped so an OSError on the shared 9p mount can never interrupt a
-    tick — same "a log write must never break the loop" discipline
-    hooks/event-logger.sh already established for hook-events.log.
+    `records` is this tick's diff_verdicts() output. `prev` is the state
+    dict this same function returned last tick, keyed by `key`: each entry
+    is `{"pair": (legacy_verdict, state_file_verdict), "since_ts_ms": ...,
+    "ticks": N}`. A key whose verdict pair is new, or whose pair changed
+    since `prev`, yields a `diverged` event and (re)starts its episode at
+    `ticks=1`. A key present in `prev` but absent from this tick's
+    `records` — because the two engines now agree, or the session vanished
+    while diverging — yields a `resolved` event carrying `since_ts_ms` and
+    the `ticks` the episode lasted. A key whose pair is unchanged
+    contributes no event, only an incremented tick count in the returned
+    state.
+    """
+    prev = dict(prev) if prev else {}
+    next_state: dict[str, dict] = {}
+    events: list[dict] = []
+    current_keys: set[str] = set()
+    for r in records:
+        key = r["key"]
+        current_keys.add(key)
+        pair = (r["legacy_verdict"], r["state_file_verdict"])
+        prev_entry = prev.get(key)
+        if prev_entry is None or prev_entry["pair"] != pair:
+            since_ts_ms = r["ts_ms"]
+            ticks = 1
+            event = dict(r)
+            event["event"] = "diverged"
+            event["since_ts_ms"] = since_ts_ms
+            event["ticks"] = ticks
+            events.append(event)
+            next_state[key] = {"pair": pair, "since_ts_ms": since_ts_ms, "ticks": ticks}
+        else:
+            next_state[key] = {
+                "pair": pair,
+                "since_ts_ms": prev_entry["since_ts_ms"],
+                "ticks": prev_entry["ticks"] + 1,
+            }
+    for key, entry in prev.items():
+        if key in current_keys:
+            continue
+        events.append({
+            "event": "resolved",
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tick)),
+            "ts_ms": int(tick * 1000),
+            "tick": tick,
+            "key": key,
+            "since_ts_ms": entry["since_ts_ms"],
+            "ticks": entry["ticks"],
+        })
+    events.sort(key=lambda e: e["key"])
+    return events, next_state
+
+
+def write_divergences(records: list[dict]) -> None:
+    """Append one JSON line per divergence event to DIVERGENCE_LOG.
+
+    Size-guarded at DIVERGENCE_LOG_MAX_BYTES (mirrors the 5MB threshold
+    hooks/event-logger.sh already uses for hook-events.log on the same
+    shared 9p mount, T-02-18): a file already over the threshold is
+    truncated and an explicit marker record is written first, so a reader
+    can never mistake a truncation for a gap in observation (T-02-21). No
+    flock is needed or added here, unlike hook-events.log — the monitor
+    holds its own process-wide singleton lock (SINGLETON_PORT), so this log
+    has exactly one writer.
+
+    Wrapped so an OSError on the shared mount can never interrupt a tick —
+    same "a log write must never break the loop" discipline
+    hooks/event-logger.sh already established for hook-events.log (T-02-19).
     """
     if not records:
         return
     try:
         DIVERGENCE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with DIVERGENCE_LOG.open("a", encoding="utf-8") as f:
+        try:
+            size = DIVERGENCE_LOG.stat().st_size
+        except OSError:
+            size = 0
+        truncated = size > DIVERGENCE_LOG_MAX_BYTES
+        with DIVERGENCE_LOG.open("w" if truncated else "a", encoding="utf-8") as f:
+            if truncated:
+                marker = {
+                    "event": "_truncated",
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time())),
+                    "note": (
+                        f"monitor-divergence.log exceeded {DIVERGENCE_LOG_MAX_BYTES} "
+                        "bytes and was truncated before this line"
+                    ),
+                }
+                f.write(json.dumps(marker) + "\n")
             for r in records:
                 f.write(json.dumps(r) + "\n")
     except OSError:
@@ -737,6 +864,33 @@ def select_render_sessions(legacy: list[dict], shadow: list[dict],
     rather than just a promise never to wire the shadow engine into the UI.
     """
     return shadow if state_files_mode else legacy
+
+
+def state_files_mode(argv: list[str] | None = None) -> bool:
+    """Whether monitor.py was launched with the `--state-files` diagnostic
+    flag (ENG-01), read directly from argv the same way `--test-notify`
+    already is — this codebase deliberately has no argparse. Kept behind a
+    function, not inlined at the call site, so it is unit-testable without
+    constructing the tkinter-backed MonitorApp; defaults to `sys.argv` so
+    normal callers don't have to pass anything.
+
+    Without the flag, every path the overlay drives — the overlay itself,
+    toasts, audio, the taskbar flash and the Telegram push — is driven by
+    the legacy list exactly as it is today (D-01). With the flag, those
+    same paths are driven by the state-file engine instead, so the new
+    engine (including its notification behaviour) can be verified by eye.
+    The shadow comparison (diff_verdicts/write_divergences) always runs
+    every tick regardless of this flag — it's a pure rendering choice made
+    once through select_render_sessions(), not a scan-time one.
+
+    Operational note: the monitor is a process-wide singleton (see
+    SINGLETON_PORT above), so a normal monitor instance has to be closed
+    before starting a `--state-files` diagnostic run — a second instance
+    started with the flag while the first is running exits silently.
+    """
+    if argv is None:
+        argv = sys.argv
+    return "--state-files" in argv
 
 
 def scan(label_map: dict[str, str] | None = None,
@@ -866,6 +1020,12 @@ def scan(label_map: dict[str, str] | None = None,
             "age": age,
             "mtime": latest_mtime,
             "action": parse_last_action(last_line),
+            # Phase 2 shadow engine (ENG-02): both locks were already computed
+            # above for the legacy status decision — reported here too so
+            # diff_verdicts() can assemble legacy_evidence without a second
+            # lock-file stat.
+            "auq_locked": auq_locked,
+            "working_locked": working_locked,
         })
     order = launcher_order()
     big = len(order) + 1
@@ -1129,11 +1289,16 @@ class MonitorApp:
         # fallback. Empty maps until the first docker tick completes.
         self._cached_container_info: dict = {"hostname_to_label": {}, "hostname_to_status": {}}
         self._docker_query_inflight = False
-        # Phase 2 shadow engine (D-01/ENG-01): False keeps rendering on the
-        # legacy engine unconditionally. Plan 02-04 wires this to the
-        # `--state-files` CLI flag; hardcoded here so select_render_sessions
-        # always returns the legacy list during this plan's shadow mode.
-        self.state_files_mode = False
+        # Phase 2 shadow engine (D-01/ENG-01): read once at startup from the
+        # `--state-files` CLI flag via state_files_mode() below. False keeps
+        # select_render_sessions() returning the legacy list unconditionally
+        # — the default run's behaviour is unchanged from before this phase.
+        self.state_files_mode = state_files_mode()
+        # Phase 2 shadow engine (ENG-02): per-key episode state carried
+        # across ticks for filter_divergence_events(), so a persisting
+        # disagreement collapses to one `diverged` line and one `resolved`
+        # line instead of one identical line every REFRESH_MS.
+        self._divergence_state: dict[str, dict] = {}
 
         # drag support via header
         self.header.bind("<Button-1>", self._start_drag)
@@ -1749,7 +1914,11 @@ class MonitorApp:
             )
         except Exception:
             shadow_sessions = []
-        write_divergences(diff_verdicts(sessions, shadow_sessions, time.time()))
+        divergence_tick = time.time()
+        diverge_records = diff_verdicts(sessions, shadow_sessions, divergence_tick)
+        diverge_events, self._divergence_state = filter_divergence_events(
+            diverge_records, self._divergence_state, divergence_tick)
+        write_divergences(diverge_events)
         # The single seam through which either engine's output can reach
         # rendering/notification — select_render_sessions(..., False) always
         # returns the legacy `sessions` list object itself (identity), which

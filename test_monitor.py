@@ -1293,5 +1293,231 @@ class Goal13_HooklessFallback(unittest.TestCase):
         self.assertNotIn("legacy_origin", by_key["a"])
 
 
+# ---------------------------------------------------------------------------
+# GOAL 14-16 — Divergence records must be decisive, episodic, and bounded
+# ---------------------------------------------------------------------------
+
+def _legacy_rec(key: str = "s1", status: str = "WORKING", **overrides) -> dict:
+    rec = {
+        "key": key, "session_id": key, "name": "L", "status": status,
+        "action": "🔧 Bash", "working_locked": True, "auq_locked": False,
+        "bg": True, "monitors": 1, "agents": 0, "age": 12.3,
+    }
+    rec.update(overrides)
+    return rec
+
+
+def _shadow_rec(key: str = "s1", status: str = "WAITING", **overrides) -> dict:
+    rec = {
+        "key": key, "session_id": key, "name": "L", "status": status,
+        "state": "waiting", "last_event": "Stop", "hostname": "container-1",
+        "background_tasks_count": 0, "age": 5.0,
+    }
+    rec.update(overrides)
+    return rec
+
+
+class DivergenceLogTestBase(unittest.TestCase):
+    """Wire a temp DIVERGENCE_LOG into the monitor module for each test."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.DIVERGENCE_LOG
+        monitor.DIVERGENCE_LOG = Path(self._tmp.name) / "monitor-divergence.log"
+
+    def tearDown(self) -> None:
+        monitor.DIVERGENCE_LOG = self._orig_log
+        self._tmp.cleanup()
+
+
+class Goal14_DivergenceRecords(DivergenceLogTestBase):
+    """diff_verdicts() must carry enough context for a reviewer to judge
+    which engine was right, without pre-judging it itself (D-04)."""
+
+    def test_agreement_yields_zero_records(self):
+        legacy = [_legacy_rec(status="WAITING")]
+        shadow = [_shadow_rec(status="WAITING")]
+        self.assertEqual(monitor.diff_verdicts(legacy, shadow, 1000.0), [])
+
+    def test_disagreement_yields_one_decisive_record(self):
+        legacy = [_legacy_rec(status="WORKING")]
+        shadow = [_shadow_rec(status="WAITING")]
+        [rec] = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        self.assertEqual(rec["legacy_verdict"], "WORKING")
+        self.assertEqual(rec["state_file_verdict"], "WAITING")
+        self.assertEqual(rec["last_event"], "Stop")
+        self.assertEqual(rec["state"], "waiting")
+        self.assertEqual(rec["hostname"], "container-1")
+        self.assertEqual(rec["background_tasks_count"], 0)
+        self.assertEqual(rec["age_sec"], 5.0)
+        self.assertEqual(rec["tick"], 1000.0)
+        self.assertEqual(rec["session_id"], "s1")
+        self.assertTrue(rec["legacy_evidence"])
+        self.assertIn("action=", rec["legacy_evidence"])
+        for field in ("likely_cause", "winner", "severity"):
+            self.assertNotIn(field, rec)
+
+    def test_legacy_only_key_yields_absent_state_file_verdict(self):
+        legacy = [_legacy_rec(status="WAITING")]
+        [rec] = monitor.diff_verdicts(legacy, [], 1000.0)
+        self.assertEqual(rec["legacy_verdict"], "WAITING")
+        self.assertEqual(rec["state_file_verdict"], "ABSENT")
+
+    def test_shadow_only_key_yields_absent_legacy_verdict(self):
+        shadow = [_shadow_rec(status="WORKING")]
+        [rec] = monitor.diff_verdicts([], shadow, 1000.0)
+        self.assertEqual(rec["legacy_verdict"], "ABSENT")
+        self.assertEqual(rec["legacy_evidence"], "ABSENT")
+
+    def test_two_empty_lists_yield_zero_records(self):
+        self.assertEqual(monitor.diff_verdicts([], [], 1000.0), [])
+
+    def test_multi_session_records_sorted_by_key(self):
+        legacy = [_legacy_rec(key="b", status="WORKING"),
+                  _legacy_rec(key="a", status="WORKING")]
+        shadow = [_shadow_rec(key="b", status="WAITING"),
+                  _shadow_rec(key="a", status="WAITING")]
+        records = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        self.assertEqual([r["key"] for r in records], ["a", "b"])
+
+
+class Goal15_DivergenceEpisodes(DivergenceLogTestBase):
+    """filter_divergence_events() collapses a persisting disagreement to one
+    opening and one closing record instead of one line every tick (D-02)."""
+
+    def test_same_disagreement_across_three_ticks_writes_one_diverged_event(self):
+        legacy = [_legacy_rec(status="WORKING")]
+        shadow = [_shadow_rec(status="WAITING")]
+
+        records1 = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        events1, state1 = monitor.filter_divergence_events(records1, None, 1000.0)
+        self.assertEqual(len(events1), 1)
+        self.assertEqual(events1[0]["event"], "diverged")
+
+        records2 = monitor.diff_verdicts(legacy, shadow, 1005.0)
+        events2, state2 = monitor.filter_divergence_events(records2, state1, 1005.0)
+        self.assertEqual(events2, [])
+
+        records3 = monitor.diff_verdicts(legacy, shadow, 1010.0)
+        events3, state3 = monitor.filter_divergence_events(records3, state2, 1010.0)
+        self.assertEqual(events3, [])
+        self.assertEqual(state3["s1"]["ticks"], 3)
+
+    def test_change_of_verdict_pair_mid_episode_writes_second_diverged(self):
+        legacy = [_legacy_rec(status="WORKING")]
+        shadow = [_shadow_rec(status="WAITING")]
+        records1 = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        events1, state1 = monitor.filter_divergence_events(records1, None, 1000.0)
+        self.assertEqual(len(events1), 1)
+
+        shadow_changed = [_shadow_rec(status="IDLE")]
+        records2 = monitor.diff_verdicts(legacy, shadow_changed, 1005.0)
+        events2, state2 = monitor.filter_divergence_events(records2, state1, 1005.0)
+        self.assertEqual(len(events2), 1)
+        self.assertEqual(events2[0]["event"], "diverged")
+        self.assertEqual(state2["s1"]["ticks"], 1)
+
+    def test_return_to_agreement_writes_one_resolved_with_ticks_greater_than_one(self):
+        legacy = [_legacy_rec(status="WORKING")]
+        shadow = [_shadow_rec(status="WAITING")]
+        records1 = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        events1, state1 = monitor.filter_divergence_events(records1, None, 1000.0)
+        records2 = monitor.diff_verdicts(legacy, shadow, 1005.0)
+        events2, state2 = monitor.filter_divergence_events(records2, state1, 1005.0)
+        records3 = monitor.diff_verdicts(legacy, shadow, 1010.0)
+        events3, state3 = monitor.filter_divergence_events(records3, state2, 1010.0)
+        self.assertEqual(state3["s1"]["ticks"], 3)
+
+        shadow_agree = [_shadow_rec(status="WORKING")]
+        records4 = monitor.diff_verdicts(legacy, shadow_agree, 1015.0)
+        self.assertEqual(records4, [])
+        events4, state4 = monitor.filter_divergence_events(records4, state3, 1015.0)
+        self.assertEqual(len(events4), 1)
+        self.assertEqual(events4[0]["event"], "resolved")
+        self.assertGreater(events4[0]["ticks"], 1)
+        self.assertEqual(events4[0]["ticks"], 3)
+        self.assertEqual(state4, {})
+
+    def test_session_disappearing_while_diverging_also_resolves(self):
+        legacy = [_legacy_rec(status="WORKING")]
+        shadow = [_shadow_rec(status="WAITING")]
+        records1 = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        events1, state1 = monitor.filter_divergence_events(records1, None, 1000.0)
+
+        records_end = monitor.diff_verdicts([], [], 1005.0)
+        self.assertEqual(records_end, [])
+        events_end, state_end = monitor.filter_divergence_events(records_end, state1, 1005.0)
+        self.assertEqual(len(events_end), 1)
+        self.assertEqual(events_end[0]["event"], "resolved")
+        self.assertEqual(state_end, {})
+
+
+class Goal16_DivergenceLogGuard(DivergenceLogTestBase):
+    """The divergence log can't grow unbounded, a write can't break a tick,
+    and evidence never carries raw prompt/tool-input content (T-02-17/18/19)."""
+
+    def test_log_over_threshold_is_truncated_with_marker_first(self):
+        monitor.DIVERGENCE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        monitor.DIVERGENCE_LOG.write_text(
+            "x" * (monitor.DIVERGENCE_LOG_MAX_BYTES + 1), encoding="utf-8")
+        monitor.write_divergences([{"event": "diverged", "key": "s1"}])
+        lines = monitor.DIVERGENCE_LOG.read_text(encoding="utf-8").splitlines()
+        self.assertGreaterEqual(len(lines), 2)
+        marker = json.loads(lines[0])
+        self.assertEqual(marker["event"], "_truncated")
+        rec = json.loads(lines[1])
+        self.assertEqual(rec["key"], "s1")
+
+    def test_write_to_unwritable_path_raises_nothing(self):
+        blocker = Path(self._tmp.name) / "blocker"
+        blocker.write_text("not a directory", encoding="utf-8")
+        monitor.DIVERGENCE_LOG = blocker / "sub" / "monitor-divergence.log"
+        try:
+            monitor.write_divergences([{"event": "diverged", "key": "s1"}])
+        except OSError:
+            self.fail("write_divergences raised OSError instead of swallowing it")
+
+    def test_no_legacy_evidence_contains_raw_prompt_or_tool_input_text(self):
+        secret = "SUPER-SECRET-PROMPT-TEXT-DO-NOT-LEAK"
+        with TemporaryDirectory() as proj_root_str:
+            proj_root = Path(proj_root_str)
+            orig_projects = monitor.PROJECTS_DIR
+            monitor.PROJECTS_DIR = proj_root
+            try:
+                _write_session(proj_root, "-workspace-app", [
+                    _user_prompt(secret, session_id="s1"),
+                ])
+                legacy = scan(sessionid_to_label={"s1": "L"})
+            finally:
+                monitor.PROJECTS_DIR = orig_projects
+        shadow = [_shadow_rec(key="s1", status="WAITING")]
+        records = monitor.diff_verdicts(legacy, shadow, 1000.0)
+        self.assertTrue(records)
+        for rec in records:
+            self.assertNotIn(secret, rec["legacy_evidence"])
+
+
+# ---------------------------------------------------------------------------
+# GOAL 17 — --state-files is a diagnostic mode, never the default path (D-01)
+# ---------------------------------------------------------------------------
+
+class Goal17_StateFilesMode(unittest.TestCase):
+
+    def test_flag_absent_returns_false(self):
+        self.assertFalse(monitor.state_files_mode(["monitor.py"]))
+
+    def test_flag_present_returns_true(self):
+        self.assertTrue(monitor.state_files_mode(["monitor.py", "--state-files"]))
+
+    def test_empty_argv_returns_false(self):
+        self.assertFalse(monitor.state_files_mode([]))
+
+    def test_select_render_sessions_identity_reasserted(self):
+        legacy = ["legacy"]
+        shadow = ["shadow"]
+        self.assertIs(monitor.select_render_sessions(legacy, shadow, False), legacy)
+        self.assertIs(monitor.select_render_sessions(legacy, shadow, True), shadow)
+
+
 if __name__ == "__main__":
     unittest.main()
