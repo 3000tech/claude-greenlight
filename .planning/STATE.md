@@ -5,12 +5,12 @@ milestone_name: milestone
 current_phase: 2
 current_phase_name: State Writer & Shadow Mode
 status: planning
-stopped_at: "Phase 1 chiusa (UAT 21/21, verdetto ibrido consegnato) — next: /gsd-discuss-phase 2"
-last_updated: "2026-07-29T14:01:35.397Z"
+stopped_at: Phase 2 context gathered
+last_updated: "2026-07-29T14:24:55.058Z"
 last_activity: 2026-07-29
 last_activity_desc: Phase 01 complete, transitioned to Phase 2
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
   total_plans: 2
   completed_plans: 2
@@ -97,6 +97,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-29T08:25:24.254Z
-Stopped at: Phase 1 chiusa — verdetto ibrido consegnato; next: /gsd-discuss-phase 2
-Resume file: None
+Last session: 2026-07-29T14:24:55.034Z
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-state-writer-shadow-mode/02-CONTEXT.md
