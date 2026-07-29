@@ -5,7 +5,7 @@
 ### Instrumentation & Live Verification
 
 - [x] **VER-01**: A logging hook records every Claude Code hook event (name + relevant payload fields + timestamp + session_id) to `~/.claude/hook-events.log`, installable alongside the existing hooks without disturbing them
-- [ ] **VER-02**: TEST-MATRIX.md verification columns are filled from live runs and a written hybrid verdict names, per hook-silent case, the fallback that covers it (user-assisted UAT for the live runs)
+- [x] **VER-02**: TEST-MATRIX.md verification columns are filled from live runs and a written hybrid verdict names, per hook-silent case, the fallback that covers it (user-assisted UAT for the live runs)
 
 ### State Writer (hooks side)
 
@@ -44,7 +44,7 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | VER-01 | Phase 1 | Complete |
-| VER-02 | Phase 1 | Pending |
+| VER-02 | Phase 1 | Complete |
 | SW-01 | Phase 2 | Pending |
 | SW-02 | Phase 2 | Pending |
 | SW-03 | Phase 2 | Pending |

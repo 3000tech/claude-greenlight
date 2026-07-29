@@ -558,3 +558,104 @@ rm -f ~/.claude/hook-events.log
 ```
 
 Then restart any running Claude Code sessions.
+
+## Tests
+<!-- UAT oggetto: 'il verdetto del caso N è scritto e concreto in TEST-MATRIX.md' (deliverable VER-02). Campagna live 2026-07-29, cc 2.1.220. -->
+
+### 1. Turn start — UserPromptSubmit
+expected: riga 1 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 2. Normal turn end — Stop
+expected: riga 2 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+note: live: 30+ Stop coerenti; timing render preciso deferito allo shadow mode (verdetto sez.3)
+
+### 3. Long multi-tool turn heartbeat
+expected: riga 3 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+note: live parziale: sub-domanda 10+min deferita allo shadow mode (verdetto sez.3)
+
+### 4. Permission prompt appearance
+expected: riga 4 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 5. Permission answered (approve/deny)
+expected: riga 5 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 6. AskUserQuestion modal
+expected: riga 6 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 7. AUQ answered
+expected: riga 7 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 8. Esc interrupt mid-turn
+expected: riga 8 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 9. Session killed mid-turn (docker kill/stop/pause)
+expected: riga 9 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 10. /resume of a past session
+expected: riga 10 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 11. /clear and /compact
+expected: riga 11 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 12. Foreground subagent SubagentStop
+expected: riga 12 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 13. Background task re-invocation
+expected: riga 13 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 14. Clean session exit
+expected: riga 14 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 15. Multi-container parallel sessions
+expected: riga 15 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 16. Two sessions same project dir
+expected: riga 16 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 17. Turn ends with async work in flight
+expected: riga 17 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+
+### 18. Bg shell/Monitor badges
+expected: riga 18 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+note: dispositioned: shell_tracker jsonl invariato per decisione V2-01 (verdetto sez.2)
+
+### 19. Abandoned prompt
+expected: riga 19 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+note: dispositioned: dedotto da 8+9, fallback heartbeat-finestra-corta nominato (verdetto sez.2)
+
+### 20. Corrupt/partial state file
+expected: riga 20 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+note: dispositioned: robustezza da coprire nei test Phase 2 (scrittura atomica tmp+rename da design)
+
+### 21. Container without hooks
+expected: riga 21 della TEST-MATRIX con verdetto version-stamped e fallback concreto se hook-muto
+result: pass
+note: dispositioned: targeted jsonl peek come ponte di migrazione (verdetto sez.2)
+
+## Summary
+
+total: 21
+passed: 21
+issues: 0
+pending: 0
+skipped: 0

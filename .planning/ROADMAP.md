@@ -13,7 +13,7 @@ The monitor moves from *inferring* session state by parsing Claude Code's intern
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Hook Coverage Verification** - Live-verify what each Claude Code hook event tells us and produce a hybrid verdict naming the fallback for every hook-silent case
+- [x] **Phase 1: Hook Coverage Verification** - Live-verify what each Claude Code hook event tells us and produce a hybrid verdict naming the fallback for every hook-silent case (completed 2026-07-29)
 - [ ] **Phase 2: State Writer & Shadow Mode** - Hooks write per-session state files; the monitor derives state from them and cross-checks against legacy parsing without changing what the user sees
 - [ ] **Phase 3: Flip to Default & Cleanup** - State-file engine becomes the default, legacy jsonl parsing is removed, tests and docs updated
 
@@ -72,6 +72,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Hook Coverage Verification | 2/2 | In Progress|  |
+| 1. Hook Coverage Verification | 2/2 | Complete    | 2026-07-29 |
 | 2. State Writer & Shadow Mode | 0/TBD | Not started | - |
 | 3. Flip to Default & Cleanup | 0/TBD | Not started | - |
