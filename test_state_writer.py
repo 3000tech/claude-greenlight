@@ -40,9 +40,13 @@ INSTALL_SH = HOOKS_DIR / "install.sh"
 STATE_WRITER_SH = HOOKS_DIR / "state-writer.sh"
 STATE_WRITER_EVENTS_JSON = HOOKS_DIR / "state-writer-events.json"
 SETTINGS_SNIPPET = HOOKS_DIR / "settings-snippet.json"
+HOOK_EVENTS_JSON = HOOKS_DIR / "hook-events.json"
+WORKING_LOCK_SH = HOOKS_DIR / "working-lock.sh"
+AUQ_LOCK_SH = HOOKS_DIR / "auq-lock.sh"
 
 LOCK_PATTERN = r"working-lock\.sh|auq-lock\.sh"
 STATE_WRITER_PATTERN = r"state-writer\.sh"
+EVENT_LOGGER_PATTERN = r"event-logger\.sh"
 
 
 def setUpModule() -> None:
@@ -544,6 +548,108 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
         self.assertNotIn("bg-42", raw)
         obj = json.loads(raw)
         self.assertEqual(obj["background_tasks_count"], 1)
+
+
+# ---------------------------------------------------------------------------
+# GOAL 7 — The state writer is fully removable in one command (SW-03)
+# ---------------------------------------------------------------------------
+
+class Goal7_RemovalPath(_HomeTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        _run_install(self.home)
+        self.snippet_lock_count = len(_commands_matching(
+            json.loads(SETTINGS_SNIPPET.read_text(encoding="utf-8")), LOCK_PATTERN,
+        ))
+        self.hook_events_count = len(json.loads(HOOK_EVENTS_JSON.read_text(encoding="utf-8")))
+        settings = _load_settings(self.home)
+        self.assertGreater(len(_commands_matching(settings, STATE_WRITER_PATTERN)), 0)
+
+    def test_remove_state_writer_strips_all_state_writer_entries(self):
+        result = _run_install(self.home, "--remove-state-writer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertEqual(len(_commands_matching(settings, STATE_WRITER_PATTERN)), 0)
+
+    def test_remove_state_writer_preserves_lock_and_event_logger_entries(self):
+        result = _run_install(self.home, "--remove-state-writer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertEqual(len(_commands_matching(settings, LOCK_PATTERN)), self.snippet_lock_count)
+        self.assertEqual(len(_commands_matching(settings, EVENT_LOGGER_PATTERN)), self.hook_events_count)
+
+    def test_remove_state_writer_on_empty_object_settings_exits_zero(self):
+        _settings_path(self.home).write_text("{}", encoding="utf-8")
+        result = _run_install(self.home, "--remove-state-writer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertEqual(_commands_matching(settings, STATE_WRITER_PATTERN), [])
+
+    def test_remove_state_writer_preserves_unrelated_top_level_key_and_hook_entry(self):
+        settings = _load_settings(self.home)
+        settings["someUnrelatedTopLevelKey"] = {"nested": True}
+        settings.setdefault("hooks", {}).setdefault("SessionStart", []).append(
+            {"hooks": [{"type": "command", "command": "bash /opt/other-tool.sh", "timeout": 2}]}
+        )
+        _settings_path(self.home).write_text(json.dumps(settings), encoding="utf-8")
+
+        result = _run_install(self.home, "--remove-state-writer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        merged = _load_settings(self.home)
+        self.assertEqual(merged.get("someUnrelatedTopLevelKey"), {"nested": True})
+        session_start_cmds = [
+            h["command"]
+            for group in merged["hooks"].get("SessionStart", [])
+            for h in group.get("hooks", [])
+        ]
+        self.assertIn("bash /opt/other-tool.sh", session_start_cmds)
+
+    def test_unknown_argument_still_errors_without_installing_anything(self):
+        with TemporaryDirectory() as fresh_home_name:
+            fresh_home = Path(fresh_home_name)
+            result = _run_install(fresh_home, "--bogus-flag")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unknown argument", result.stderr)
+            self.assertFalse((fresh_home / ".claude" / "hooks").exists())
+
+
+# ---------------------------------------------------------------------------
+# GOAL 8 — Migration non-regression: the existing lock hooks keep working,
+# unchanged, across install / reinstall / teardown (SW-03)
+# ---------------------------------------------------------------------------
+
+class Goal8_MigrationNonRegression(_HomeTestCase):
+    def _lock_scripts_match_repo(self) -> None:
+        installed_working = self.home / ".claude" / "hooks" / "working-lock.sh"
+        installed_auq = self.home / ".claude" / "hooks" / "auq-lock.sh"
+        self.assertTrue(installed_working.is_file())
+        self.assertTrue(installed_auq.is_file())
+        self.assertEqual(installed_working.read_bytes(), WORKING_LOCK_SH.read_bytes())
+        self.assertEqual(installed_auq.read_bytes(), AUQ_LOCK_SH.read_bytes())
+
+    def test_lock_counts_unchanged_across_install_reinstall_and_teardown(self):
+        snippet_lock_count = len(_commands_matching(
+            json.loads(SETTINGS_SNIPPET.read_text(encoding="utf-8")), LOCK_PATTERN,
+        ))
+
+        result1 = _run_install(self.home)
+        self.assertEqual(result1.returncode, 0, result1.stderr)
+        after_install = len(_commands_matching(_load_settings(self.home), LOCK_PATTERN))
+        self.assertEqual(after_install, snippet_lock_count)
+        self._lock_scripts_match_repo()
+
+        result2 = _run_install(self.home)
+        self.assertEqual(result2.returncode, 0, result2.stderr)
+        after_reinstall = len(_commands_matching(_load_settings(self.home), LOCK_PATTERN))
+        self.assertEqual(after_reinstall, snippet_lock_count)
+        self._lock_scripts_match_repo()
+
+        result3 = _run_install(self.home, "--remove-state-writer")
+        self.assertEqual(result3.returncode, 0, result3.stderr)
+        after_teardown = len(_commands_matching(_load_settings(self.home), LOCK_PATTERN))
+        self.assertEqual(after_teardown, snippet_lock_count)
+        self._lock_scripts_match_repo()
 
 
 if __name__ == "__main__":
