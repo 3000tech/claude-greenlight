@@ -58,6 +58,15 @@ AUQ_LOCK_MAX_AGE_SEC = 3600
 # + installer.
 WORKING_LOCK_DIR = Path.home() / ".claude" / "working-locks"
 WORKING_LOCK_MAX_AGE_SEC = 3600
+# Phase 2 state-writer engine (shadow mode): one small JSON verdict file per
+# session_id, written atomically by hooks/state-writer.sh on lifecycle
+# events. Module-level so tests can repoint them the way they already
+# repoint PROJECTS_DIR/AUQ_LOCK_DIR. See scan_state_files() below and
+# .planning/phases/02-state-writer-shadow-mode/ for the design — this engine
+# is shadow-only during Phase 2 (D-01): its output never reaches rendering
+# or notification directly, see select_render_sessions().
+STATE_DIR = Path.home() / ".claude" / "monitor-state"
+DIVERGENCE_LOG = Path.home() / ".claude" / "monitor-divergence.log"
 # Optional launcher-registry integration: a shell script with a PROJECTS=( ... )
 # array (label|... entries) that controls project naming and display order.
 # Point CLAUDE_LAUNCHER_SH at it; without it, labels fall back to path segments.
@@ -419,6 +428,175 @@ def resolve_alias(answer: str | None, previous: str = "") -> str:
     return answer.strip()
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 state-writer engine (shadow mode) — reads ~/.claude/monitor-state/
+# (hooks/state-writer.sh's output) as a second, independent verdict source.
+# NEVER reaches rendering/notification directly during Phase 2 (D-01); see
+# select_render_sessions(), the single seam that enforces this structurally.
+# ---------------------------------------------------------------------------
+
+def _read_state_file(path: Path) -> dict | None:
+    """Defensive read of one monitor-state/<session_id>.json file.
+
+    Mirrors tail_last_line()'s idiom exactly: any read/parse failure
+    degrades to None rather than raising, so a missing (hookless container),
+    corrupt, or partially-written file (caught mid tmp-rename, TEST-MATRIX
+    case 20) can never crash a scan_state_files() tick — it just drops that
+    one session.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            obj = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return obj
+
+
+def _state_to_status(state: str | None) -> tuple[str, str, str, int]:
+    """Map a state-file `state` value to the same (status, dot, color, rank)
+    tuple legacy's scan() builds, so scan_state_files()'s output is a
+    structural lookalike the divergence comparator can pair by key.
+
+    `working` -> WORKING (grey, "#666", rank 2). `waiting`, `needs_input`
+    (D-07: identical to turn-end green, no new color) and `idle` all ->
+    WAITING (green, "#4ade80", rank 1) — legacy's exact WAITING colour. Any
+    unknown or missing value also -> WAITING, matching legacy's
+    default-green posture (scan() only flips to WORKING on unambiguous
+    evidence).
+    """
+    if state == "working":
+        return "WORKING", "●", "#666", 2
+    return "WAITING", "●", "#4ade80", 1
+
+
+def scan_state_files(label_map: dict[str, str] | None = None,
+                      sessionid_to_label: dict[str, str] | None = None) -> list[dict]:
+    """Shadow-mode sibling of scan(): derives one verdict per session from
+    ~/.claude/monitor-state/*.json (written atomically by
+    hooks/state-writer.sh) instead of parsing any jsonl.
+
+    Mirrors scan()'s session-dict shape (same keys legacy emits, so the
+    divergence comparator can pair the two lists by `key`) plus shadow-only
+    extras (`state`, `last_event`, `hostname`, `background_tasks_count`).
+    `label_map` is accepted for signature parity with scan() (D-05 requires
+    reproducing today's labels); state files always carry a real
+    session_id (the filename stem), so only `sessionid_to_label` is
+    actually consulted here.
+    """
+    if not STATE_DIR.is_dir():
+        return []
+    now = time.time()
+    sessions = []
+    for f in STATE_DIR.glob("*.json"):
+        session_id = f.stem
+        obj = _read_state_file(f)
+        if obj is None:
+            continue
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            continue
+        age = now - mtime
+        if age > MAX_AGE_SEC:
+            continue
+        name = sessionid_to_label.get(session_id) if sessionid_to_label else None
+        if name is None:
+            continue
+        status, dot, color, rank = _state_to_status(obj.get("state"))
+        sessions.append({
+            "key": session_id,
+            "name": name,
+            "session_id": session_id,
+            "encoded_dir": "",
+            "dot": dot,
+            "dot_color": color,
+            "bg": False,
+            "monitors": 0,
+            "agents": 0,
+            "status": status,
+            "rank": rank,
+            "age": age,
+            "mtime": mtime,
+            "action": "",
+            "state": obj.get("state"),
+            "last_event": obj.get("last_event"),
+            "hostname": obj.get("hostname"),
+            "background_tasks_count": obj.get("background_tasks_count"),
+        })
+    order = launcher_order()
+    big = len(order) + 1
+    sessions.sort(key=lambda s: (order.get(s["name"], big), -s["mtime"]))
+    return sessions
+
+
+def diff_verdicts(legacy: list[dict], shadow: list[dict], tick: float) -> list[dict]:
+    """Pure comparison, no I/O. Emits one record per session `key` whose
+    legacy and shadow `status` disagree; an empty list when everything
+    agrees. Records are sorted by `key` so the divergence log reads stable
+    across ticks.
+
+    Field shape carries everything D-04 requires to judge which side was
+    right during review: session, tick, both verdicts, the state-file
+    engine's last hook event, and its raw `state` value.
+    """
+    legacy_by_key = {s["key"]: s for s in legacy}
+    shadow_by_key = {s["key"]: s for s in shadow}
+    records: list[dict] = []
+    for key in set(legacy_by_key) | set(shadow_by_key):
+        l = legacy_by_key.get(key)
+        s = shadow_by_key.get(key)
+        legacy_status = l["status"] if l else None
+        shadow_status = s["status"] if s else None
+        if legacy_status == shadow_status:
+            continue
+        ref = l or s
+        records.append({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tick)),
+            "ts_ms": int(tick * 1000),
+            "tick": tick,
+            "key": key,
+            "session_id": ref.get("session_id"),
+            "name": ref.get("name"),
+            "legacy_verdict": legacy_status,
+            "state_file_verdict": shadow_status,
+            "state": s.get("state") if s else None,
+            "last_event": s.get("last_event") if s else None,
+        })
+    records.sort(key=lambda r: r["key"])
+    return records
+
+
+def write_divergences(records: list[dict]) -> None:
+    """Append one JSON line per divergence record to DIVERGENCE_LOG.
+
+    Wrapped so an OSError on the shared 9p mount can never interrupt a
+    tick — same "a log write must never break the loop" discipline
+    hooks/event-logger.sh already established for hook-events.log.
+    """
+    if not records:
+        return
+    try:
+        DIVERGENCE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with DIVERGENCE_LOG.open("a", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+    except OSError:
+        pass
+
+
+def select_render_sessions(legacy: list[dict], shadow: list[dict],
+                            state_files_mode: bool) -> list[dict]:
+    """The single seam through which either engine's output can reach
+    rendering or notification. Returns the legacy list *object* itself
+    (identity, not a copy) when state_files_mode is False — this is what
+    makes D-01 ("zero UX change during Phase 2") structurally enforceable
+    rather than just a promise never to wire the shadow engine into the UI.
+    """
+    return shadow if state_files_mode else legacy
+
+
 def scan(label_map: dict[str, str] | None = None,
          sessionid_to_label: dict[str, str] | None = None) -> list[dict]:
     if not PROJECTS_DIR.is_dir():
@@ -775,6 +953,11 @@ class MonitorApp:
         self._cached_label_map: dict[str, str] = {}
         self._sessionid_to_label: dict[str, str] = {}
         self._docker_query_inflight = False
+        # Phase 2 shadow engine (D-01/ENG-01): False keeps rendering on the
+        # legacy engine unconditionally. Plan 02-04 wires this to the
+        # `--state-files` CLI flag; hardcoded here so select_render_sessions
+        # always returns the legacy list during this plan's shadow mode.
+        self.state_files_mode = False
 
         # drag support via header
         self.header.bind("<Button-1>", self._start_drag)
@@ -1377,6 +1560,21 @@ class MonitorApp:
         except Exception:
             sessions = []
 
+        # Phase 2 shadow engine (D-01: shadow-only, never rendered directly
+        # during default operation). One bad shadow tick must never break
+        # the loop — same defensive wrapping as the legacy scan() call
+        # above.
+        try:
+            shadow_sessions = scan_state_files(self._cached_label_map, self._sessionid_to_label)
+        except Exception:
+            shadow_sessions = []
+        write_divergences(diff_verdicts(sessions, shadow_sessions, time.time()))
+        # The single seam through which either engine's output can reach
+        # rendering/notification — select_render_sessions(..., False) always
+        # returns the legacy `sessions` list object itself (identity), which
+        # is what makes D-01 structurally enforceable rather than a promise.
+        render_sessions = select_render_sessions(sessions, shadow_sessions, self.state_files_mode)
+
         # One-time prune of persisted aliases: anything whose session ended
         # while the monitor was off. Gated on a non-empty scan so a transient
         # empty result can't wipe every label the user set.
@@ -1393,10 +1591,10 @@ class MonitorApp:
         if self.count_lbl.cget("text") != count_txt:
             self.count_lbl.config(text=count_txt)
 
-        self._check_transitions(sessions)
+        self._check_transitions(render_sessions)
 
         if self.mode == "compact":
-            self._refresh_compact(sessions)
+            self._refresh_compact(render_sessions)
             self.root.after(REFRESH_MS, self.refresh)
             return
 
@@ -1439,7 +1637,7 @@ class MonitorApp:
 
         # Update session rows (keyed by project name)
         seen = set()
-        for s in sessions:
+        for s in render_sessions:
             key = s["key"]
             seen.add(key)
             row = self._session_rows.get(key)
@@ -1474,7 +1672,7 @@ class MonitorApp:
                 # Alias is left in place — a session can blink out of one scan
                 # and back. Persisted aliases are pruned once, at startup.
 
-        new_order = [s["key"] for s in sessions]
+        new_order = [s["key"] for s in render_sessions]
         if new_order != self._session_order:
             for key in new_order:
                 row = self._session_rows.get(key)
@@ -1483,7 +1681,7 @@ class MonitorApp:
                     row["frame"].pack(fill="x", pady=2)
             self._session_order = new_order
 
-        if not sessions and not self._session_rows:
+        if not render_sessions and not self._session_rows:
             self.empty_lbl.pack(pady=12)
         else:
             self.empty_lbl.pack_forget()

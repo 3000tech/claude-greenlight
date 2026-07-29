@@ -24,8 +24,15 @@
 #                    settings.json (and then delete
 #                    ~/.claude/hooks/event-logger.sh / hook-events.log
 #                    yourself) once the Phase 1 UAT concludes.
+#   state-writer.sh  Phase 2 authoritative per-session state writer (see
+#                    hooks/state-writer-events.json) → atomically (re)writes
+#                    ~/.claude/monitor-state/<session_id>.json on every event
+#                    name listed in hooks/state-writer-events.json (the D-08
+#                    verdict event set). Registered on
+#                    `--remove-state-writer` to strip its entries from
+#                    settings.json.
 #
-# Usage: install.sh [--remove-logger]
+# Usage: install.sh [--remove-logger|--remove-state-writer]
 #
 # Requires: jq.
 set -euo pipefail
@@ -36,11 +43,13 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 SNIPPET="$HERE/settings-snippet.json"
 EVENTS_FILE="$HERE/hook-events.json"
 LOGGER_CMD='bash "$HOME/.claude/hooks/event-logger.sh"'
+STATE_WRITER_EVENTS_FILE="$HERE/state-writer-events.json"
+STATE_WRITER_CMD='bash "$HOME/.claude/hooks/state-writer.sh"'
 
 mode="${1:-install}"
 
-if [ $# -gt 0 ] && [ "$1" != "--remove-logger" ]; then
-  echo "unknown argument: $1 (expected: --remove-logger)" >&2
+if [ $# -gt 0 ] && [ "$1" != "--remove-logger" ] && [ "$1" != "--remove-state-writer" ]; then
+  echo "unknown argument: $1 (expected: --remove-logger or --remove-state-writer)" >&2
   exit 1
 fi
 
@@ -60,13 +69,31 @@ if [ "$mode" = "--remove-logger" ]; then
   exit 0
 fi
 
-mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/auq-locks" "$CLAUDE_DIR/working-locks"
+if [ "$mode" = "--remove-state-writer" ]; then
+  if [ ! -f "$SETTINGS" ]; then
+    echo "nothing to do: $SETTINGS does not exist"
+    exit 0
+  fi
+  cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)"
+  jq '
+    def has_state_writer: [.hooks[]?.command] | any(. // "" | test("state-writer\\.sh"));
+    .hooks = ((.hooks // {}) | with_entries(.value |= map(select(has_state_writer | not))))
+  ' "$SETTINGS" > "$SETTINGS.tmp"
+  python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
+  mv "$SETTINGS.tmp" "$SETTINGS"
+  echo "removed: state-writer.sh entries from $SETTINGS (backup at $SETTINGS.bak.*)"
+  exit 0
+fi
+
+mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/auq-locks" "$CLAUDE_DIR/working-locks" "$CLAUDE_DIR/monitor-state"
 install -m 0755 "$HERE/auq-lock.sh" "$CLAUDE_DIR/hooks/auq-lock.sh"
 echo "installed: $CLAUDE_DIR/hooks/auq-lock.sh"
 install -m 0755 "$HERE/working-lock.sh" "$CLAUDE_DIR/hooks/working-lock.sh"
 echo "installed: $CLAUDE_DIR/hooks/working-lock.sh"
 install -m 0755 "$HERE/event-logger.sh" "$CLAUDE_DIR/hooks/event-logger.sh"
 echo "installed: $CLAUDE_DIR/hooks/event-logger.sh"
+install -m 0755 "$HERE/state-writer.sh" "$CLAUDE_DIR/hooks/state-writer.sh"
+echo "installed: $CLAUDE_DIR/hooks/state-writer.sh"
 
 if [ ! -f "$SETTINGS" ]; then
   cp "$SNIPPET" "$SETTINGS"
@@ -106,3 +133,18 @@ jq --argjson events "$(cat "$EVENTS_FILE")" --arg cmd "$LOGGER_CMD" '
 python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
 mv "$SETTINGS.tmp" "$SETTINGS"
 echo "registered: event-logger.sh on $(jq 'length' "$EVENTS_FILE") event(s) in $SETTINGS"
+
+# Register state-writer.sh on every event name in state-writer-events.json —
+# the D-08 verdict event set (see header comment above). Kept as its own jq
+# pass, separate from both the lock merge and the logger registration pass
+# above, so neither of those keeps behaving exactly as it did before the
+# state writer existed.
+jq --argjson events "$(cat "$STATE_WRITER_EVENTS_FILE")" --arg cmd "$STATE_WRITER_CMD" '
+  def has_state_writer: [.hooks[]?.command] | any(. // "" | test("state-writer\\.sh"));
+  reduce $events[] as $event (.;
+    .hooks[$event] = ((.hooks[$event] // []) | map(select(has_state_writer | not))) + [{"hooks": [{"type": "command", "command": $cmd, "timeout": 2}]}]
+  )
+' "$SETTINGS" > "$SETTINGS.tmp"
+python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
+mv "$SETTINGS.tmp" "$SETTINGS"
+echo "registered: state-writer.sh on $(jq 'length' "$STATE_WRITER_EVENTS_FILE") event(s) in $SETTINGS"
