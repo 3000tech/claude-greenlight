@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: State Writer & Shadow Mode
+current_phase: 02
+current_phase_name: state-writer-shadow-mode
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-07-29T15:10:30.720Z"
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-07-29T15:24:24.717Z"
 last_activity: 2026-07-29
-last_activity_desc: Phase 01 complete, transitioned to Phase 2
+last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 7
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-28)
 
 **Core value:** Keep telling the user "this session needs you now" reliably — stop breaking every time Claude Code changes its internal jsonl format; hook-derived state is correct by construction instead of guessed.
-**Current focus:** Phase 2 — State Writer & Shadow Mode
+**Current focus:** Phase 02 — state-writer-shadow-mode
 
 ## Current Position
 
-Phase: 2 — State Writer & Shadow Mode
-Plan: Not started
+Phase: 02 (state-writer-shadow-mode) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-29 — Phase 01 complete, transitioned to Phase 2
+Last activity: 2026-07-29 — Phase 02 execution started
 
-Progress: [██████████] 100%
+Progress: [████░░░░░░] 43%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [██████████] 100%
 |------|----------|-------|-------|
 | Phase 01 P01 | 8min | 3 tasks | 5 files |
 | Phase 01 P02 | 6min | 2 tasks | 3 files |
+| Phase 02 P01 | 13min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,9 @@ Recent decisions affecting current work:
 - [Phase ?]: install.sh --remove-logger sweeps all hooks.<Event> arrays generically rather than scoping to the current hook-events.json list, so it cleans up stale entries from any prior event-list version
 - [Phase ?]: [Phase 01-02]: Every jq field/event in 01-UAT.md was grounded against the real hooks/event-logger.sh and hooks/hook-events.json (plan 01-01), not RESEARCH.md doc-fetch prose, and mechanically verified by the plan's <verify> gate
 - [Phase ?]: [Phase 01-02]: TEST-MATRIX.md rows 6 (AskUserQuestion) and 8 (Esc interrupt) pre-filled with research-confirmed answers (issues 28273, 12605, 15872, 9516) but Verified column left empty pending live confirmation on the tester's Claude Code version
+- [Phase ?]: [Phase 02-01]: background_tasks_count uses a deny-list (not completed/failed) rather than an == running allowlist (RESEARCH assumption A2), so an undocumented status value can't undercount live async work
+- [Phase ?]: [Phase 02-01]: Only the Stop event is mapped to a state write this plan; every other registered event exits 0 without writing — remaining D-08 event mapping is plan 02-02's scope
+- [Phase ?]: [Phase 02-01]: select_render_sessions() is the single seam through which either engine's output can reach rendering, enforcing D-01 structurally rather than by convention
 
 ### Pending Todos
 
@@ -97,6 +101,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-29T14:24:55.034Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-state-writer-shadow-mode/02-CONTEXT.md
+Last session: 2026-07-29T15:24:24.654Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: None

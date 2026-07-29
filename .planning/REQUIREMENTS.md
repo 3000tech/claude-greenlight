@@ -9,14 +9,14 @@
 
 ### State Writer (hooks side)
 
-- [ ] **SW-01**: Hooks write one state file per session (`~/.claude/monitor-state/<session_id>.json`) atomically (tmp + rename) on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `SessionEnd`
-- [ ] **SW-02**: Each state file carries `state`, `ts`, `cwd`, `last_event`, so the monitor can derive label mapping and staleness without reading the jsonl
+- [x] **SW-01**: Hooks write one state file per session (`~/.claude/monitor-state/<session_id>.json`) atomically (tmp + rename) on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `SessionEnd`
+- [x] **SW-02**: Each state file carries `state`, `ts`, `cwd`, `last_event`, so the monitor can derive label mapping and staleness without reading the jsonl
 - [ ] **SW-03**: Existing working-lock / auq-lock hooks keep functioning unchanged while the state writer is rolled out (no regression during migration)
 
 ### Monitor Engine (Windows side)
 
-- [ ] **ENG-01**: `monitor.py --state-files` derives session state from `monitor-state/` as primary source
-- [ ] **ENG-02**: Shadow mode runs the state-file engine alongside legacy parsing and logs every divergence (session, tick, legacy verdict vs state-file verdict) without changing UI behavior
+- [x] **ENG-01**: `monitor.py --state-files` derives session state from `monitor-state/` as primary source
+- [x] **ENG-02**: Shadow mode runs the state-file engine alongside legacy parsing and logs every divergence (session, tick, legacy verdict vs state-file verdict) without changing UI behavior
 - [ ] **ENG-03**: Stale sessions are detected via heartbeat silence plus `docker ps` cross-check; a killed container never leaves a forever-grey session
 - [ ] **ENG-04**: Corrupt, partial, or missing state files never crash the monitor; the session degrades to fallback or idle
 - [ ] **ENG-05**: Sessions from hookless containers remain visible via per-session legacy parsing fallback
@@ -45,11 +45,11 @@
 |-------------|-------|--------|
 | VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
-| SW-01 | Phase 2 | Pending |
-| SW-02 | Phase 2 | Pending |
+| SW-01 | Phase 2 | Complete |
+| SW-02 | Phase 2 | Complete |
 | SW-03 | Phase 2 | Pending |
-| ENG-01 | Phase 2 | Pending |
-| ENG-02 | Phase 2 | Pending |
+| ENG-01 | Phase 2 | Complete |
+| ENG-02 | Phase 2 | Complete |
 | ENG-03 | Phase 2 | Pending |
 | ENG-04 | Phase 2 | Pending |
 | ENG-05 | Phase 2 | Pending |
