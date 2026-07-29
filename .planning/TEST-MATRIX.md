@@ -4,11 +4,15 @@ Goal: before (and during) the hook-driven refactor, verify for each real-world
 case **which hook event fires** and whether it is enough to derive the correct
 state — or whether jsonl/lock fallback remains necessary (hybrid model).
 
-How to use: run each case live (Windows host + container sessions), observe
-`~/.claude/` for hook side effects (add a temporary logging hook that appends
-every event + payload to `~/.claude/hook-events.log`), fill in the last two
-columns. Cases marked ⚠ are the ones that historically broke transcript
-parsing — they decide the hybrid question.
+How to use: the instrument already exists — `hooks/event-logger.sh`
+(installed/removed via `hooks/install.sh` and `hooks/install.sh
+--remove-logger`) appends every Claude Code hook event as one JSONL line to
+`~/.claude/hook-events.log`. Follow
+[01-UAT.md](phases/01-hook-coverage-verification/01-UAT.md) end to end — it
+gives the exact trigger and the exact observation command for every row
+below — and fill in the last two columns of this table as you go. Cases
+marked ⚠ are the ones that historically broke transcript parsing — they
+decide the hybrid question.
 
 Expected states: `working` (grey), `waiting` (green, notify), `needs_input`
 (green, notify — permission/AUQ).
@@ -20,9 +24,9 @@ Expected states: `working` (grey), `waiting` (green, notify), `needs_input`
 | 3 | ⚠ Long multi-tool turn (10+ min) | Big task, many tool calls | working throughout | `PostToolUse` heartbeat | Gaps > heartbeat window during pure thinking/generation stretches? | |
 | 4 | ⚠ Permission prompt | Tool not in allowlist (e.g. dangerous rm) | needs_input | `Notification` | Does it fire for ALL prompt types (Bash, MCP, file writes)? | |
 | 5 | Permission answered → resumes | Approve the prompt in #4; also test DENY (Claude continues with a refusal message) | working | next `PostToolUse`? `PreToolUse`? | Window between approval and next event where state is stale; deny path has no tool execution at all | |
-| 6 | ⚠ AskUserQuestion modal | Ask Claude to use AskUserQuestion | needs_input | **unknown — THE open question** | Known: no jsonl write until answered (2.1.132); if no hook either → auq-lock stays | |
+| 6 | ⚠ AskUserQuestion modal | Ask Claude to use AskUserQuestion | needs_input | No PreToolUse/PostToolUse hook fires — research-confirmed via issues 28273, 12605, 15872; awaiting live confirmation on tester's version | auq-lock remains the needs_input source — research-confirmed, not yet live-confirmed | |
 | 7 | AUQ answered → resumes | Answer the modal in #6 | working | `UserPromptSubmit`? `PostToolUse`? | | |
-| 8 | User interrupt (Esc mid-turn) | Esc during a long turn; also the "yuno" variant: Esc right after a foreground agent returns | waiting | `Stop`? | `Stop` may not fire on interrupt → stale `working` | |
+| 8 | User interrupt (Esc mid-turn) | Esc during a long turn; also the "yuno" variant: Esc right after a foreground agent returns | waiting | Stop does not fire on interrupt — research-confirmed via official docs + issue 9516; awaiting live confirmation on tester's version | stale-working recovery cannot rely on Stop — research-confirmed, not yet live-confirmed | |
 | 9 | ⚠ Session killed mid-turn | `docker kill` / close terminal during a turn | stale file detected | none (by definition) | Staleness design: heartbeat silence ~10 min + `docker ps` cross-check | |
 | 10 | `/resume` of a past session | Resume an ended session | working on next prompt | `SessionStart` (source=resume) | Old session's leftover state file; session_id continuity | |
 | 11 | `/clear` and `/compact` | Run mid-session | no spurious notify | `SessionStart` (source=clear/compact) | Must not look like a fresh "turn ended" → false green + toast | |
@@ -39,16 +43,46 @@ Expected states: `working` (grey), `waiting` (green, notify), `needs_input`
 
 ## Verdict to extract
 
-After filling the table, answer:
+Fill in every slot below after the live run in
+[01-UAT.md](phases/01-hook-coverage-verification/01-UAT.md). This section
+cannot be completed vaguely — every hook-silent case needs exactly one row
+naming a concrete fallback.
 
-1. **Hooks-only viable?** Only if #6 (AUQ) and #8 (interrupt) have a hook
-   signal, AND the #17/#18 design question (async work + badges) is resolved
-   without jsonl. Current suspicion (matches past analysis): **no** → hybrid
-   model, hooks as primary source + targeted fallbacks (auq-lock-style,
-   shell_tracker) for the silent cases.
-2. **Which fallbacks survive?** For each ⚠ row without a hook signal, name
-   the minimal fallback (existing lock file, jsonl peek, docker cross-check).
-3. **Notification timing** (#2): if `Stop` fires post-render, drop the
-   debounce idea from NOTES.md entirely.
+### 1. Hooks-only viable?
 
-Findings feed the migration plan in [NOTES.md](NOTES.md) (shadow mode phase).
+- **Yes / No:** _(fill in)_
+- **Justification:** _(one line — reference the specific cases that decide
+  it: #6 AUQ, #8 interrupt, and the #17/#18 design question)_
+
+### 2. Which fallbacks survive?
+
+For every case whose live run showed no usable hook signal, add exactly one
+row. The fallback must be a concrete named mechanism from the available set
+— the existing **auq-lock**, **shell_tracker**, a **targeted jsonl peek**, or
+the **`docker ps` cross-check** — not "TBD" and not a description of a
+mechanism that does not exist yet.
+
+| Case # | Hook signal observed | Fallback that covers it | Why this fallback |
+|--------|----------------------|--------------------------|--------------------|
+| _(fill in)_ | | | |
+
+### 3. Notification timing (case #2)
+
+- **Measured gap** between perceived render end and the `Stop` event's
+  `ts_ms`: _(fill in)_
+- **Decision:** drop the NOTES.md debounce idea entirely, or keep it —
+  _(fill in)_
+
+### 4. Async-work-in-flight design (case #17)
+
+- **What the live data showed:** _(fill in — does `Stop` fire while
+  background shells/agents are still running?)_
+- **Decision:** keep current grey-while-working semantics (needs
+  `shell_tracker`), or accept green-on-`Stop` — per D-07, preserve current
+  semantics unless live data contradicts them: _(fill in)_
+
+---
+
+These answers are the direct input to Phase 2's **ENG-06** fallback coverage
+requirement and to the state-writer's event-to-state mapping in
+[NOTES.md](NOTES.md) (shadow mode phase).
