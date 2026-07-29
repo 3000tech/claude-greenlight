@@ -184,6 +184,24 @@ class Goal1_LogLineShape(_HomeTestCase):
         self.assertNotIn("tool_input", line)
         self.assertNotIn("tool_response", line)
 
+    def test_is_interrupt_and_duration_ms_captured_by_value(self):
+        payload = _payload(
+            event="PostToolUseFailure", session_id="s3", cwd="/w",
+            tool_name="Bash",
+            is_interrupt=True,
+            duration_ms=1234,
+            error="command aborted",
+            tool_input={"command": "sleep 60"},
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertIs(line["is_interrupt"], True)
+        self.assertEqual(line["duration_ms"], 1234)
+        # error stays keys-only: it can echo command/content text.
+        self.assertIn("error", line["keys"])
+        self.assertNotIn("error", line)
+
 
 # ---------------------------------------------------------------------------
 # GOAL 2 — Secrets in tool payloads never land on the shared mount by value

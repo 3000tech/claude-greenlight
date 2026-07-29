@@ -13,7 +13,9 @@
 # Captured by value: identity/scalar metadata only (ts, ts_ms, event,
 # session_id, cwd, source, reason, trigger, matcher, permission_mode,
 # tool_name, tool_use_id, notification_type, agent_type, agent_id,
-# subagent_type, task_id, stop_hook_active) plus `keys`, the payload's own
+# subagent_type, task_id, stop_hook_active, is_interrupt, duration_ms —
+# the latter two carried by PostToolUseFailure and needed to tell an Esc
+# interrupt apart from an ordinary tool error) plus `keys`, the payload's own
 # top-level field names — which answers "what fields does this event carry
 # and what are they called" without logging any of their values.
 #
@@ -78,7 +80,9 @@ line=$(jq -c --arg raw_flag "$RAW_FLAG" '
       agent_id,
       subagent_type,
       task_id,
-      stop_hook_active
+      stop_hook_active,
+      is_interrupt,
+      duration_ms
     }
     + (
         if .message == null then {}
