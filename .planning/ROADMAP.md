@@ -50,7 +50,15 @@ Plans:
   4. Shadow mode runs the state-file engine alongside legacy parsing during real usage and logs every divergence (session, tick, legacy verdict vs. state-file verdict) without changing what the user sees in the overlay.
   5. Sessions from hookless containers stay visible via per-session legacy-parsing fallback, and every hook-silent case named in Phase 1's verdict is covered by its designated fallback — including current async-work semantics (grey while bg shells/Monitors/agents run) and shell_tracker badges staying intact.
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+
+- [ ] 02-01-PLAN.md — Tracer: a Stop hook event becomes an atomic state file, a shadow WAITING verdict and a divergence record, end to end (SW-01, SW-02, ENG-01, ENG-02)
+- [ ] 02-02-PLAN.md — Complete the D-08 event-to-state mapping, the background-task gate at turn end, and the state-writer teardown (SW-01, SW-02, SW-03, ENG-06)
+- [ ] 02-03-PLAN.md — Engine: full state-file derivation, heartbeat staleness plus docker liveness cross-check, hookless-container fallback (ENG-01, ENG-03, ENG-04, ENG-05, ENG-06)
+- [ ] 02-04-PLAN.md — Shadow mode: decisive episodic divergence records and the state-files diagnostic mode (ENG-01, ENG-02)
+- [ ] 02-05-PLAN.md — Live activation runbook 02-UAT.md and the blocking human-verify checkpoint (SW-03, ENG-02, ENG-03, ENG-05, ENG-06)
 
 ### Phase 3: Flip to Default & Cleanup
 
@@ -73,5 +81,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Hook Coverage Verification | 2/2 | Complete    | 2026-07-29 |
-| 2. State Writer & Shadow Mode | 0/TBD | Not started | - |
+| 2. State Writer & Shadow Mode | 0/5 | Not started | - |
 | 3. Flip to Default & Cleanup | 0/TBD | Not started | - |
