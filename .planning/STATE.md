@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: state-writer-shadow-mode
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-07-29T15:24:24.717Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-07-29T15:34:05.970Z"
 last_activity: 2026-07-29
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 7
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 ## Current Position
 
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-07-29 — Phase 02 execution started
 
-Progress: [████░░░░░░] 43%
+Progress: [██████░░░░] 57%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [████░░░░░░] 43%
 | Phase 01 P01 | 8min | 3 tasks | 5 files |
 | Phase 01 P02 | 6min | 2 tasks | 3 files |
 | Phase 02 P01 | 13min | 2 tasks | 5 files |
+| Phase 02 P02 | 15min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-01]: background_tasks_count uses a deny-list (not completed/failed) rather than an == running allowlist (RESEARCH assumption A2), so an undocumented status value can't undercount live async work
 - [Phase ?]: [Phase 02-01]: Only the Stop event is mapped to a state write this plan; every other registered event exits 0 without writing — remaining D-08 event mapping is plan 02-02's scope
 - [Phase ?]: [Phase 02-01]: select_render_sessions() is the single seam through which either engine's output can reach rendering, enforcing D-01 structurally rather than by convention
+- [Phase ?]: [Phase 02-02]: background_tasks_count resolved once (deny-list: not completed, not failed) and shared between the Stop gate and the record field so they can never disagree
+- [Phase ?]: [Phase 02-02]: SessionStart(source=compact) exits without writing rather than writing idle, since /compact re-fires SessionStart on the SAME session_id mid-turn (TEST-MATRIX case 11)
+- [Phase ?]: [Phase 02-02]: SubagentStop is an explicit no-op branch (not a fall-through) since it can arrive after the parent's Stop (TEST-MATRIX case 12)
+- [Phase ?]: [Phase 02-02]: install.sh --remove-state-writer was already complete from plan 02-01; this plan only added the Goal7/Goal8 regression tests locking the SW-03 guarantee down
 
 ### Pending Todos
 
@@ -101,6 +106,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-29T15:24:24.654Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-07-29T15:34:05.913Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None

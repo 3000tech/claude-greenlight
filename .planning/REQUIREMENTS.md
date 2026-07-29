@@ -11,7 +11,7 @@
 
 - [x] **SW-01**: Hooks write one state file per session (`~/.claude/monitor-state/<session_id>.json`) atomically (tmp + rename) on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `SessionEnd`
 - [x] **SW-02**: Each state file carries `state`, `ts`, `cwd`, `last_event`, so the monitor can derive label mapping and staleness without reading the jsonl
-- [ ] **SW-03**: Existing working-lock / auq-lock hooks keep functioning unchanged while the state writer is rolled out (no regression during migration)
+- [x] **SW-03**: Existing working-lock / auq-lock hooks keep functioning unchanged while the state writer is rolled out (no regression during migration)
 
 ### Monitor Engine (Windows side)
 
@@ -20,7 +20,7 @@
 - [ ] **ENG-03**: Stale sessions are detected via heartbeat silence plus `docker ps` cross-check; a killed container never leaves a forever-grey session
 - [ ] **ENG-04**: Corrupt, partial, or missing state files never crash the monitor; the session degrades to fallback or idle
 - [ ] **ENG-05**: Sessions from hookless containers remain visible via per-session legacy parsing fallback
-- [ ] **ENG-06**: Verified hook-silent cases (per VER-02 verdict) are covered by targeted fallbacks; current async-work semantics (grey while bg shells/Monitors/agents run, badges intact) are preserved via shell_tracker
+- [x] **ENG-06**: Verified hook-silent cases (per VER-02 verdict) are covered by targeted fallbacks; current async-work semantics (grey while bg shells/Monitors/agents run, badges intact) are preserved via shell_tracker
 
 ### Flip & Cleanup
 
@@ -47,13 +47,13 @@
 | VER-02 | Phase 1 | Complete |
 | SW-01 | Phase 2 | Complete |
 | SW-02 | Phase 2 | Complete |
-| SW-03 | Phase 2 | Pending |
+| SW-03 | Phase 2 | Complete |
 | ENG-01 | Phase 2 | Complete |
 | ENG-02 | Phase 2 | Complete |
 | ENG-03 | Phase 2 | Pending |
 | ENG-04 | Phase 2 | Pending |
 | ENG-05 | Phase 2 | Pending |
-| ENG-06 | Phase 2 | Pending |
+| ENG-06 | Phase 2 | Complete |
 | FLIP-01 | Phase 3 | Pending |
 | FLIP-02 | Phase 3 | Pending |
 | FLIP-03 | Phase 3 | Pending |
