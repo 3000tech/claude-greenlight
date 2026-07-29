@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -264,6 +266,123 @@ class Goal3_InstallRegistration(_HomeTestCase):
         snippet_lock_count = len(_commands_matching(snippet, LOCK_PATTERN))
         merged_lock_count = len(_commands_matching(settings, LOCK_PATTERN))
         self.assertEqual(merged_lock_count, snippet_lock_count)
+
+
+# ---------------------------------------------------------------------------
+# GOAL 4 — The atomic write survives a mid-write kill and concurrent writers
+# ---------------------------------------------------------------------------
+
+class Goal4_AtomicWriteUnderStress(_HomeTestCase):
+    def test_sigkill_during_write_never_corrupts_final_path(self):
+        """Direct check of RESEARCH assumption A3 / TEST-MATRIX case 20: a
+        writer killed between its temp write and its rename must leave the
+        final path either absent or holding a complete, parseable JSON
+        document — never zero-byte, never a truncated fragment."""
+        state_dir = _state_dir(self.home)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        sid = "kill-target"
+        final = state_dir / f"{sid}.json"
+        final.write_text(json.dumps({"state": "waiting", "seed": True}), encoding="utf-8")
+
+        payload = _payload(event="Stop", session_id=sid)
+        iterations = 30
+        for _ in range(iterations):
+            proc = subprocess.Popen(
+                ["bash", str(STATE_WRITER_SH)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=_base_env(self.home),
+            )
+            proc.stdin.write(payload.encode())
+            proc.stdin.close()
+            # Vary the kill point across iterations — a few hundred
+            # microseconds to a few milliseconds is enough to straddle the
+            # jq-build / temp-write / rename sequence on this fast script.
+            time.sleep(random.uniform(0, 0.004))
+            proc.kill()
+            proc.wait(timeout=5)
+
+            if final.exists():
+                content = final.read_bytes()
+                self.assertGreater(len(content), 0, "final path is zero-byte after a kill")
+                obj = json.loads(content.decode("utf-8"))
+                self.assertIn("state", obj)
+
+    def test_concurrent_writers_same_session_never_interleave(self):
+        state_dir = _state_dir(self.home)
+        sid = "concurrent-target"
+        n = 5
+        payloads = [
+            _payload(event="Stop", session_id=sid, cwd=f"/workspace-{i}")
+            for i in range(n)
+        ]
+        procs = []
+        for p in payloads:
+            proc = subprocess.Popen(
+                ["bash", str(STATE_WRITER_SH)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env=_base_env(self.home),
+            )
+            proc.stdin.write(p.encode())
+            proc.stdin.close()
+            procs.append(proc)
+        for proc in procs:
+            self.assertEqual(proc.wait(timeout=15), 0, proc.stderr.read())
+            proc.stderr.close()
+
+        final = state_dir / f"{sid}.json"
+        self.assertTrue(final.exists())
+        obj = json.loads(final.read_text(encoding="utf-8"))
+        self.assertEqual(obj["last_event"], "Stop")
+        sent_cwds = {f"/workspace-{i}" for i in range(n)}
+        self.assertIn(obj["cwd"], sent_cwds)
+
+        leftover_tmp = list(state_dir.glob(f"{sid}.json.tmp.*"))
+        self.assertEqual(leftover_tmp, [], f"leftover temp files: {leftover_tmp}")
+
+    def test_same_cwd_different_session_ids_stay_separate(self):
+        """TEST-MATRIX case 15's adjacency problem: two containers mounting
+        the same /workspace must not collide in monitor-state/."""
+        cwd = "/workspace"
+        r1 = _run_state_writer(
+            _payload(event="Stop", session_id="sep-a", cwd=cwd,
+                     background_tasks=[{"status": "running"}]),
+            self.home,
+        )
+        r2 = _run_state_writer(
+            _payload(event="Stop", session_id="sep-b", cwd=cwd,
+                     background_tasks=[{"status": "running"}, {"status": "running"}]),
+            self.home,
+        )
+        self.assertEqual(r1.returncode, 0, r1.stderr)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+
+        state_dir = _state_dir(self.home)
+        fa = state_dir / "sep-a.json"
+        fb = state_dir / "sep-b.json"
+        self.assertTrue(fa.exists())
+        self.assertTrue(fb.exists())
+        obj_a = json.loads(fa.read_text(encoding="utf-8"))
+        obj_b = json.loads(fb.read_text(encoding="utf-8"))
+        self.assertEqual(obj_a["cwd"], cwd)
+        self.assertEqual(obj_b["cwd"], cwd)
+        # Deterministic content difference proves these are two independent
+        # records, not one file merged/overwritten into the other.
+        self.assertEqual(obj_a["background_tasks_count"], 1)
+        self.assertEqual(obj_b["background_tasks_count"], 2)
+
+    def test_nonascii_cwd_round_trips_through_json_load(self):
+        cwd = "/workspace/café-日本語"
+        sid = "nonascii"
+        result = _run_state_writer(_payload(event="Stop", session_id=sid, cwd=cwd), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        self.assertTrue(state_file.exists())
+        obj = json.loads(state_file.read_text(encoding="utf-8"))
+        self.assertEqual(obj["cwd"], cwd)
 
 
 if __name__ == "__main__":
