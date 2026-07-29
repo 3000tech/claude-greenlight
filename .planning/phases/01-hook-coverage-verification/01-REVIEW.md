@@ -14,7 +14,9 @@ findings:
   warning: 5
   info: 1
   total: 6
-status: issues_found
+status: fixed
+fixed_at: 2026-07-29T09:00:00Z
+fix_report: 01-REVIEW-FIX.md
 ---
 
 # Phase 01: Code Review Report
@@ -22,7 +24,7 @@ status: issues_found
 **Reviewed:** 2026-07-29T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 5
-**Status:** issues_found
+**Status:** fixed (see `01-REVIEW-FIX.md`)
 
 ## Summary
 
@@ -33,6 +35,8 @@ No Critical/BLOCKER findings. Five Warnings were confirmed by direct reproductio
 ## Warnings
 
 ### WR-01: `install.sh --remove-logger` crashes on a `settings.json` without a `hooks` key
+
+**Status:** Fixed (commit `07c17ca`)
 
 **File:** `hooks/install.sh:48-51`
 **Issue:** The teardown path does:
@@ -58,6 +62,8 @@ Also add a regression test: run `--remove-logger` against a freshly-created `set
 
 ### WR-02: `install.sh` silently performs a full install on an unrecognized argument
 
+**Status:** Fixed (commit `5ad4dfa`)
+
 **File:** `hooks/install.sh:40-56`
 **Issue:** `mode="${1:-install}"` is only ever compared against the literal string `--remove-logger`; any other value (including a typo like `--remove-logge`) falls through to the full install path with no error. Reproduced directly:
 ```
@@ -79,6 +85,8 @@ fi
 ```
 
 ### WR-03: Size-guard truncation in `event-logger.sh` has a read-check-truncate race that can drop log lines
+
+**Status:** Fixed (commit `09cfc22`) — requires human verification (concurrency logic; see REVIEW-FIX.md)
 
 **File:** `hooks/event-logger.sh:97-111`
 **Issue:** The size guard does a plain read-then-act sequence with no locking:
@@ -113,6 +121,8 @@ When multiple hooks fire close together (routine for this project — e.g. `PreT
 
 ### WR-04: Notification `message` is captured by value without being in the script's own content-bearing exclusion list
 
+**Status:** Fixed (commit `7c4d8a1`) — implemented per explicit user decision: kept `message` captured by default, truncated to 200 chars; full value only under `GREENLIGHT_LOG_RAW=1`.
+
 **File:** `hooks/event-logger.sh:13-24, 70`
 **Issue:** The header comment explicitly enumerates what must stay excluded because it can carry secrets — `tool_input, tool_response/tool_output, prompt, last_assistant_message` — and the code correctly omits those from the default capture. `message` (Notification's payload field) is captured by value in the jq filter (`notification_type, message,`) and is not on that exclusion list. Per the phase's own `01-RESEARCH.md` (doc-fetch ambiguity notes), the exact shape/content of Notification `message` was never confirmed before this was written — it may be a short fixed string ("Claude needs your permission") or it may echo back contentful text (tool name, a path, or a command fragment) depending on the notification type, which is precisely the kind of value the "no content-bearing payload fields by default" invariant is meant to guard against. As written, any content that does end up in `message` lands unredacted on the shared `~/.claude` bind mount by default, with no raw-opt-in gate.
 **Fix:** Either (a) move `message` behind the same `GREENLIGHT_LOG_RAW` gate as other content-bearing fields until the live UAT confirms its actual content is safe, or (b) once confirmed safe via the live log, add an explicit note next to the header's exclusion list stating why `message` was kept by default. Minimal code change for (a):
@@ -128,6 +138,8 @@ When multiple hooks fire close together (routine for this project — e.g. `PreT
 ```
 
 ### WR-05: `test_event_logger.py`'s jq-availability guard aborts the suite instead of skipping cleanly
+
+**Status:** Fixed (commit `e36b0f4`)
 
 **File:** `test_event_logger.py:33-34`
 **Issue:**
@@ -157,6 +169,8 @@ def setUpModule() -> None:
 ## Info
 
 ### IN-01: Redundant non-empty check after an already-guaranteed-non-empty value
+
+**Status:** Fixed (commit `d29396e`)
 
 **File:** `hooks/event-logger.sh:88-90, 113-115`
 **Issue:** Line 88-90 already does `if [ -z "$line" ]; then exit 0; fi`, so by line 113 `$line` is guaranteed non-empty. The subsequent `if [ -n "$line" ]; then printf ... fi` is dead-guard code — harmless, but it's redundant and slightly obscures that the append always happens at that point.
