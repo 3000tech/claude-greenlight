@@ -394,5 +394,33 @@ class Goal7_RemovalPath(_HomeTestCase):
         self.assertEqual(len(_commands_matching(settings, LOCK_PATTERN)), self.snippet_lock_count)
 
 
+class Goal7b_RemovalPathOnUnpopulatedSettings(_HomeTestCase):
+    """`--remove-logger` must no-op cleanly (exit 0) on a settings.json that
+    has never had any hooks registered at all — i.e. no `hooks` key yet.
+    Regression test for WR-01: with_entries on a null .hooks crashed jq."""
+
+    def test_remove_logger_on_settings_without_hooks_key_exits_zero(self):
+        claude_dir = self.home / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        _settings_path(self.home).write_text("{}", encoding="utf-8")
+
+        result = _run_install(self.home, "--remove-logger")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertEqual(_commands_matching(settings, LOGGER_PATTERN), [])
+
+    def test_remove_logger_on_settings_with_unrelated_keys_but_no_hooks(self):
+        claude_dir = self.home / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        _settings_path(self.home).write_text(
+            json.dumps({"someUnrelatedTopLevelKey": {"nested": True}}), encoding="utf-8",
+        )
+
+        result = _run_install(self.home, "--remove-logger")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertEqual(settings.get("someUnrelatedTopLevelKey"), {"nested": True})
+
+
 if __name__ == "__main__":
     unittest.main()

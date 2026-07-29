@@ -47,7 +47,7 @@ if [ "$mode" = "--remove-logger" ]; then
   cp "$SETTINGS" "$SETTINGS.bak.$(date +%s)"
   jq '
     def has_logger: [.hooks[]?.command] | any(. // "" | test("event-logger\\.sh"));
-    .hooks |= with_entries(.value |= map(select(has_logger | not)))
+    .hooks = ((.hooks // {}) | with_entries(.value |= map(select(has_logger | not))))
   ' "$SETTINGS" > "$SETTINGS.tmp"
   python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
   mv "$SETTINGS.tmp" "$SETTINGS"
