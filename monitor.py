@@ -533,7 +533,8 @@ def _state_record_age(obj: dict, mtime: float, now: float) -> float:
 
 
 def scan_state_files(label_map: dict[str, str] | None = None,
-                      sessionid_to_label: dict[str, str] | None = None) -> list[dict]:
+                      sessionid_to_label: dict[str, str] | None = None,
+                      container_info: dict | None = None) -> list[dict]:
     """Shadow-mode sibling of scan(): derives one verdict per session from
     ~/.claude/monitor-state/*.json (written atomically by
     hooks/state-writer.sh) instead of parsing any jsonl.
@@ -543,8 +544,23 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     extras (`state`, `last_event`, `hostname`, `background_tasks_count`).
     `label_map` is accepted for signature parity with scan() (D-05 requires
     reproducing today's labels); state files always carry a real
-    session_id (the filename stem), so only `sessionid_to_label` is
-    actually consulted here.
+    session_id (the filename stem), so `sessionid_to_label` and, as a
+    fallback, `container_info["hostname_to_label"]` are what's actually
+    consulted here — the hostname fallback matters because
+    `sessionid_to_label` is built via `docker exec` (query_container_sessionids),
+    which cannot reach a paused container; without it a paused session's
+    label would be unresolved and it would vanish from the shadow list,
+    making the paused-stays-WORKING staleness branch below unreachable.
+
+    `container_info` (scan_containers()'s fourth return element) also gates
+    a stale WORKING verdict: past STATE_HEARTBEAT_STALE_SEC (or the shorter
+    STATE_PROMPT_STALE_SEC when the last event was UserPromptSubmit)
+    without a fresher heartbeat, the verdict recovers to WAITING — unless
+    the record's hostname maps to a `paused` container, which D-06 treats
+    as alive-but-frozen, never dead. This is the named fallback for the
+    Esc interrupt, the permission-denial dead end, the killed container and
+    the abandoned pre-tool prompt (TEST-MATRIX cases 8, 5-deny, 9, 19) —
+    none of which emit any hook event to hang a transition on.
 
     Degrades one session at a time, never the whole tick (TEST-MATRIX case
     20): a directory-listing failure returns an empty list, a single file's
@@ -585,13 +601,27 @@ def scan_state_files(label_map: dict[str, str] | None = None,
         obj = _read_state_file(f)
         if obj is None:
             continue
+        hostname = obj.get("hostname")
+        hostname = hostname if isinstance(hostname, str) and hostname else None
         name = sessionid_to_label.get(session_id) if sessionid_to_label else None
+        if name is None and container_info and hostname:
+            name = container_info.get("hostname_to_label", {}).get(hostname)
         if name is None:
             continue
         age = _state_record_age(obj, mtime, now)
         state_val = obj.get("state")
         last_event = obj.get("last_event")
         status, dot, color, rank = _state_to_status(state_val)
+        if status == "WORKING":
+            window = (STATE_PROMPT_STALE_SEC if last_event == "UserPromptSubmit"
+                      else STATE_HEARTBEAT_STALE_SEC)
+            if age > window:
+                container_status = None
+                if container_info and hostname:
+                    container_status = container_info.get(
+                        "hostname_to_status", {}).get(hostname)
+                if container_status != "paused":
+                    status, dot, color, rank = "WAITING", "●", "#4ade80", 1
         bg_count = obj.get("background_tasks_count")
         if not isinstance(bg_count, (int, float)):
             bg_count = None
@@ -821,15 +851,22 @@ def scan(label_map: dict[str, str] | None = None,
     return sessions
 
 
-def scan_containers() -> tuple[list[dict], dict[str, str]]:
+def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]:
     """List running Docker containers that carry a 'project' label.
 
-    Returns (rows, label_map) where label_map maps encoded session-dir names
-    (as they appear under ~/.claude/projects/) to the container's launcher label.
+    Returns (rows, label_map, sessionid_to_label, container_info):
+    `label_map` maps encoded session-dir names (as they appear under
+    ~/.claude/projects/) to the container's launcher label; `container_info`
+    is the Phase 2 state-file engine's container-identity/liveness
+    cross-check (D-05, ENG-03) — {"hostname_to_label": ..., "hostname_to_status": ...},
+    keyed by the container hostname the state writer captures at write
+    time, built from the one container-inspection call below (no second
+    subprocess call added).
     """
+    empty_container_info = {"hostname_to_label": {}, "hostname_to_status": {}}
     docker = shutil.which("docker")
     if not docker:
-        return [], {}, {}
+        return [], {}, {}, dict(empty_container_info)
     kwargs: dict = {}
     if os.name == "nt":
         # Suppress console window flash on Windows (pythonw still shows one otherwise)
@@ -841,9 +878,9 @@ def scan_containers() -> tuple[list[dict], dict[str, str]]:
             capture_output=True, text=True, timeout=2, check=False, **kwargs,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return [], {}, {}
+        return [], {}, {}, dict(empty_container_info)
     if out.returncode != 0:
-        return [], {}, {}
+        return [], {}, {}, dict(empty_container_info)
     rows = []
     ids = []
     cid_to_label: dict[str, str] = {}
@@ -859,11 +896,22 @@ def scan_containers() -> tuple[list[dict], dict[str, str]]:
     rows.sort(key=lambda r: (order.get(r["project"], big), r["project"].lower()))
 
     label_map: dict[str, str] = {}
+    # Bound before the `if ids:` block below: a tick with zero labelled
+    # containers must still leave this defined, or the `if container_labels:`
+    # check further down raises NameError into the worker thread's blanket
+    # `except Exception`, silently freezing the sessionId cache on its last
+    # known value. Pre-existing latent bug in this function, fixed here
+    # since this task rewrites the function anyway.
+    container_labels: dict[str, str] = {}
+    hostname_to_label: dict[str, str] = {}
+    hostname_to_status: dict[str, str] = {}
     if ids:
         try:
             insp = subprocess.run(
                 [docker, "inspect",
-                 "--format", "{{.Config.Labels.project}}\t{{.Config.WorkingDir}}",
+                 "--format",
+                 "{{.Config.Labels.project}}\t{{.Config.WorkingDir}}"
+                 "\t{{.State.Status}}\t{{.Config.Hostname}}",
                  *ids],
                 capture_output=True, text=True, timeout=2, check=False, **kwargs,
             )
@@ -882,6 +930,14 @@ def scan_containers() -> tuple[list[dict], dict[str, str]]:
                 if encoded:
                     per_container_encoded[cid] = encoded
                     pending.setdefault(encoded, []).append(parts[0])
+                # Container-identity cross-check (D-05/ENG-03): keyed by
+                # hostname — the state writer captures $HOSTNAME at write
+                # time, and docker exec (query_container_sessionids below)
+                # cannot reach a paused container, so this is the only
+                # label path a paused session has.
+                if len(parts) >= 4 and parts[3]:
+                    hostname_to_label[parts[3]] = cid_to_label.get(cid, "")
+                    hostname_to_status[parts[3]] = parts[2] if len(parts) >= 3 else ""
             for encoded, labels in pending.items():
                 # Only safe to map encoded_dir → label without docker exec when
                 # exactly one container claims this dir. Two containers with the
@@ -901,7 +957,10 @@ def scan_containers() -> tuple[list[dict], dict[str, str]]:
         sessionid_to_label = query_container_sessionids(
             docker, container_labels, kwargs
         )
-    return rows, label_map, sessionid_to_label
+    return rows, label_map, sessionid_to_label, {
+        "hostname_to_label": hostname_to_label,
+        "hostname_to_status": hostname_to_status,
+    }
 
 
 def query_container_sessionids(
@@ -1042,6 +1101,11 @@ class MonitorApp:
         self._cached_containers: list[dict] = []
         self._cached_label_map: dict[str, str] = {}
         self._sessionid_to_label: dict[str, str] = {}
+        # Phase 2 shadow engine (ENG-03): hostname_to_label/hostname_to_status
+        # from scan_containers()'s fourth return element, feeding
+        # scan_state_files()'s staleness gate and paused-container label
+        # fallback. Empty maps until the first docker tick completes.
+        self._cached_container_info: dict = {"hostname_to_label": {}, "hostname_to_status": {}}
         self._docker_query_inflight = False
         # Phase 2 shadow engine (D-01/ENG-01): False keeps rendering on the
         # legacy engine unconditionally. Plan 02-04 wires this to the
@@ -1610,7 +1674,7 @@ class MonitorApp:
 
         def worker() -> None:
             try:
-                rows, label_map, sid_map = scan_containers()
+                rows, label_map, sid_map, container_info = scan_containers()
             except Exception:
                 # Transient docker hiccup — keep prior cache, skip this tick.
                 self._first_docker_done = True
@@ -1623,6 +1687,7 @@ class MonitorApp:
             # the UI, otherwise jsonls from killed containers keep showing as
             # ghost rows (still within MAX_AGE_SEC mtime).
             self._sessionid_to_label = sid_map
+            self._cached_container_info = container_info
             self._first_docker_done = True
             self._docker_query_inflight = False
 
@@ -1655,7 +1720,10 @@ class MonitorApp:
         # the loop — same defensive wrapping as the legacy scan() call
         # above.
         try:
-            shadow_sessions = scan_state_files(self._cached_label_map, self._sessionid_to_label)
+            shadow_sessions = scan_state_files(
+                self._cached_label_map, self._sessionid_to_label,
+                container_info=self._cached_container_info,
+            )
         except Exception:
             shadow_sessions = []
         write_divergences(diff_verdicts(sessions, shadow_sessions, time.time()))

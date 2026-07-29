@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 import unittest
@@ -1099,6 +1100,111 @@ class Goal10_StateFileRobustness(StateFileTestBase):
         monitor.scan_state_files(sessionid_to_label={"ancient": "L", "fresh": "L"})
         self.assertFalse(old_path.exists())
         self.assertTrue(fresh_path.exists())
+
+
+class Goal11_StateFileStaleness(StateFileTestBase):
+    """A stale WORKING verdict recovers to WAITING via heartbeat silence +
+    docker liveness cross-check — the named fallback for the Esc interrupt,
+    the permission-denial dead end, the killed container and the abandoned
+    pre-tool prompt (TEST-MATRIX cases 8, 5-deny, 9, 19)."""
+
+    @staticmethod
+    def _container_info(hostname_to_status: dict[str, str]) -> dict:
+        return {"hostname_to_label": {}, "hostname_to_status": hostname_to_status}
+
+    def test_fresh_working_record_stays_working(self):
+        self._write_state("a", state="working", hostname="h1")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "running"}))
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_stale_working_record_with_running_container_flips_waiting(self):
+        old_ts = int((time.time() - monitor.STATE_HEARTBEAT_STALE_SEC - 5) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=old_ts,
+                           last_event="PostToolUse")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "running"}))
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_stale_working_record_with_paused_container_stays_working(self):
+        old_ts = int((time.time() - monitor.STATE_HEARTBEAT_STALE_SEC - 5) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=old_ts,
+                           last_event="PostToolUse")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "paused"}))
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_stale_working_record_with_exited_container_flips_waiting(self):
+        old_ts = int((time.time() - monitor.STATE_HEARTBEAT_STALE_SEC - 5) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=old_ts,
+                           last_event="PostToolUse")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "exited"}))
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_stale_working_record_with_unknown_container_status_flips_waiting(self):
+        old_ts = int((time.time() - monitor.STATE_HEARTBEAT_STALE_SEC - 5) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=old_ts,
+                           last_event="PostToolUse")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({}))
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_stale_working_record_without_container_info_flips_waiting(self):
+        old_ts = int((time.time() - monitor.STATE_HEARTBEAT_STALE_SEC - 5) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=old_ts,
+                           last_event="PostToolUse")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_working_record_with_user_prompt_submit_flips_after_shorter_window(self):
+        ts = int((time.time() - 120) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=ts,
+                           last_event="UserPromptSubmit")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "running"}))
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_working_record_with_post_tool_use_at_same_age_stays_working(self):
+        ts = int((time.time() - 120) * 1000)
+        self._write_state("a", state="working", hostname="h1", ts_ms=ts,
+                           last_event="PostToolUse")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "running"}))
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_waiting_record_never_affected_by_silence(self):
+        old_ts = int((time.time() - monitor.STATE_HEARTBEAT_STALE_SEC * 10) * 1000)
+        self._write_state("a", state="waiting", hostname="h1", ts_ms=old_ts)
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({}))
+        self.assertEqual(s["status"], "WAITING")
+
+
+class Goal12_ContainerInfoShape(unittest.TestCase):
+    """scan_containers()'s arity change (ENG-03): container_info carries
+    both hostname maps even when the docker binary is absent, so the shape
+    is provable without a docker install in this sandbox."""
+
+    def test_scan_containers_returns_four_elements_with_container_info_maps(self):
+        orig_which = shutil.which
+        shutil.which = lambda name: None
+        try:
+            result = monitor.scan_containers()
+        finally:
+            shutil.which = orig_which
+        self.assertEqual(len(result), 4)
+        container_info = result[3]
+        self.assertIn("hostname_to_label", container_info)
+        self.assertIn("hostname_to_status", container_info)
 
 
 if __name__ == "__main__":
