@@ -385,5 +385,71 @@ class Goal4_AtomicWriteUnderStress(_HomeTestCase):
         self.assertEqual(obj["cwd"], cwd)
 
 
+# ---------------------------------------------------------------------------
+# GOAL 5 — Every in-turn event resolves to the state the live campaign
+# prescribes (TEST-MATRIX.md D-08 verdict)
+# ---------------------------------------------------------------------------
+
+class Goal5_EventToStateMapping(_HomeTestCase):
+    def _write(self, event: str, session_id: str = "s1", **extra) -> dict:
+        result = _run_state_writer(_payload(event=event, session_id=session_id, **extra), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        return result
+
+    def _read(self, session_id: str = "s1") -> dict:
+        return json.loads((_state_dir(self.home) / f"{session_id}.json").read_text(encoding="utf-8"))
+
+    def test_working_events_produce_last_event_and_working_state(self):
+        for event in ("UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "PostToolBatch"):
+            with self.subTest(event=event):
+                sid = f"working-{event}"
+                self._write(event, session_id=sid)
+                obj = self._read(sid)
+                self.assertEqual(obj["last_event"], event)
+                self.assertEqual(obj["state"], "working")
+
+    def test_permission_request_and_notification_produce_needs_input(self):
+        for event in ("PermissionRequest", "Notification"):
+            with self.subTest(event=event):
+                sid = f"needs-input-{event}"
+                self._write(event, session_id=sid)
+                obj = self._read(sid)
+                self.assertEqual(obj["last_event"], event)
+                self.assertEqual(obj["state"], "needs_input")
+
+    def test_session_start_with_recognised_and_absent_source_produces_idle(self):
+        for source_kwargs in ({"source": "startup"}, {"source": "resume"}, {"source": "clear"}, {}):
+            with self.subTest(source=source_kwargs.get("source", "<absent>")):
+                sid = f"idle-{source_kwargs.get('source', 'absent')}"
+                self._write("SessionStart", session_id=sid, **source_kwargs)
+                obj = self._read(sid)
+                self.assertEqual(obj["last_event"], "SessionStart")
+                self.assertEqual(obj["state"], "idle")
+
+    def test_session_start_compact_on_working_session_leaves_file_byte_identical(self):
+        sid = "compact-target"
+        self._write("UserPromptSubmit", session_id=sid)
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        before_bytes = state_file.read_bytes()
+        before_mtime = state_file.stat().st_mtime_ns
+
+        self._write("SessionStart", session_id=sid, source="compact")
+
+        after_bytes = state_file.read_bytes()
+        after_mtime = state_file.stat().st_mtime_ns
+        self.assertEqual(before_bytes, after_bytes)
+        self.assertEqual(before_mtime, after_mtime)
+        # Confirm the pre-compact write really was `working`, not already `idle`.
+        self.assertEqual(json.loads(before_bytes)["state"], "working")
+
+    def test_unregistered_event_name_writes_nothing(self):
+        sid = "unregistered-event"
+        result = _run_state_writer(_payload(event="SomeFutureEventNameNotInTheMapping", session_id=sid), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse((_state_dir(self.home) / f"{sid}.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

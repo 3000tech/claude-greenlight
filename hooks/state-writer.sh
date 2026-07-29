@@ -37,6 +37,26 @@
 # Teardown: `hooks/install.sh --remove-state-writer` strips every
 # state-writer entry from settings.json; ~/.claude/monitor-state/ can then
 # be deleted once nothing reads it.
+#
+# Event-to-state mapping (D-08 verdict, TEST-MATRIX.md "Verdict to extract"):
+#   UserPromptSubmit                         -> working
+#   PostToolUse / PostToolUseFailure /
+#     PostToolBatch (heartbeats)             -> working
+#   PermissionRequest / Notification         -> needs_input
+#   SessionStart (source != compact)         -> idle
+#   SessionStart (source == compact)         -> no write (case 11 — a
+#     mid-session /compact re-fires SessionStart on the SAME session_id;
+#     writing idle here would blank a live working state and read
+#     downstream as a turn that ended)
+#   Stop                                     -> waiting (unconditionally
+#     until plan 02-02 Task 2 adds the background-task gate)
+#   SubagentStop, SessionEnd, any other/unregistered event name -> no write
+#     (Task 2 fills in SubagentStop's deliberate no-op and SessionEnd's
+#     unconditional removal; today they fall through the default case)
+#
+# `idle` is an internal writer state with no separate rendering: the engine
+# maps it to the same WAITING verdict as `waiting` and `needs_input`, per
+# D-07 and D-01 (zero UX change during Phase 2's shadow mode).
 set -u
 
 payload=$(cat)
@@ -65,11 +85,31 @@ esac
 state_dir="$HOME/.claude/monitor-state"
 mkdir -p "$state_dir"
 
-# Event-to-state mapping — this task maps exactly ONE event (Stop). Every
-# other event name exits 0 without writing; the full D-08 mapping (plan
-# 02-02) fills in the remaining branches. This is a functionality gap, not
-# an architectural one — the write path proven here is the whole point.
+# Event-to-state mapping — the in-turn branches (D-08 verdict). Stop stays
+# unconditionally `waiting` here, exactly as the tracer left it; the
+# background-task gate, the SubagentStop no-op and the SessionEnd removal
+# are Task 2's scope. Every branch either resolves a `state` value for the
+# record builder below, or exits 0 without writing.
 case "$event" in
+  UserPromptSubmit)
+    state="working"
+    ;;
+  PostToolUse|PostToolUseFailure|PostToolBatch)
+    state="working"
+    ;;
+  PermissionRequest|Notification)
+    state="needs_input"
+    ;;
+  SessionStart)
+    source_val=$(jq -r '.source // empty' <<<"$payload" 2>/dev/null)
+    if [ "$source_val" = "compact" ]; then
+      # A mid-session /compact re-fires SessionStart on the SAME
+      # session_id (TEST-MATRIX case 11) — writing here would blank a
+      # live `working` state and read downstream as a turn that ended.
+      exit 0
+    fi
+    state="idle"
+    ;;
   Stop)
     state="waiting"
     ;;
