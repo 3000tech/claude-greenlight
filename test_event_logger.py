@@ -299,6 +299,13 @@ class Goal5_InstallRegistrationAndIdempotency(_HomeTestCase):
         self.assertEqual(merged_lock_count, snippet_lock_count)
         self.assertGreater(snippet_lock_count, 0)
 
+    def test_unrecognized_argument_errors_and_does_not_install(self):
+        result = _run_install(self.home, "--remove-logge")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown argument", result.stderr)
+        self.assertFalse((self.home / ".claude" / "hooks").exists())
+        self.assertFalse(_settings_path(self.home).exists())
+
     def test_running_install_twice_yields_one_logger_entry_per_event(self):
         _run_install(self.home)
         result = _run_install(self.home)

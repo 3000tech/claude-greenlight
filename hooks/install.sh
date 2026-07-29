@@ -39,6 +39,11 @@ LOGGER_CMD='bash "$HOME/.claude/hooks/event-logger.sh"'
 
 mode="${1:-install}"
 
+if [ $# -gt 0 ] && [ "$1" != "--remove-logger" ]; then
+  echo "unknown argument: $1 (expected: --remove-logger)" >&2
+  exit 1
+fi
+
 if [ "$mode" = "--remove-logger" ]; then
   if [ ! -f "$SETTINGS" ]; then
     echo "nothing to do: $SETTINGS does not exist"
