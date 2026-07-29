@@ -89,6 +89,7 @@ Tools like cctop, Sessionly, or the various claude-code-monitors work well when 
 
 ```
 python3 -m unittest test_monitor.py
+python3 -m unittest test_event_logger.py
 ```
 
 Design notes live in [`.planning/NOTES.md`](.planning/NOTES.md).
