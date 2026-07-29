@@ -15,7 +15,10 @@
 # tool_name, tool_use_id, notification_type, agent_type, agent_id,
 # subagent_type, task_id, stop_hook_active, is_interrupt, duration_ms —
 # the latter two carried by PostToolUseFailure and needed to tell an Esc
-# interrupt apart from an ordinary tool error) plus `keys`, the payload's own
+# interrupt apart from an ordinary tool error — and background_tasks_count,
+# the LENGTH of Stop's background_tasks array: whether async work is in
+# flight at turn end, without logging the tasks themselves, whose
+# descriptors can carry command text) plus `keys`, the payload's own
 # top-level field names — which answers "what fields does this event carry
 # and what are they called" without logging any of their values.
 #
@@ -82,7 +85,8 @@ line=$(jq -c --arg raw_flag "$RAW_FLAG" '
       task_id,
       stop_hook_active,
       is_interrupt,
-      duration_ms
+      duration_ms,
+      background_tasks_count: (if (.background_tasks | type) == "array" then (.background_tasks | length) else null end)
     }
     + (
         if .message == null then {}

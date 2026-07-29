@@ -202,6 +202,23 @@ class Goal1_LogLineShape(_HomeTestCase):
         self.assertIn("error", line["keys"])
         self.assertNotIn("error", line)
 
+    def test_background_tasks_logged_as_count_only(self):
+        payload = _payload(
+            event="Stop", session_id="s4", cwd="/w",
+            background_tasks=[
+                {"id": "t1", "command": "sleep 60 && deploy.sh --secret"},
+                {"id": "t2", "command": "tail -f log"},
+            ],
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertEqual(line["background_tasks_count"], 2)
+        # The array itself (task descriptors can carry command text) stays
+        # keys-only.
+        self.assertIn("background_tasks", line["keys"])
+        self.assertNotIn("background_tasks", line)
+
 
 # ---------------------------------------------------------------------------
 # GOAL 2 — Secrets in tool payloads never land on the shared mount by value
