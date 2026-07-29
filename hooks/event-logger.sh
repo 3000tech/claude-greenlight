@@ -131,13 +131,8 @@ mkdir -p "$LOG_DIR"
       fi
     fi
   fi
-  if [ -n "$line" ]; then
-    printf '%s\n' "$line" >> "$LOG"
-  fi
-) 9>"$LOG.lock" 2>/dev/null || {
-  if [ -n "$line" ]; then
-    printf '%s\n' "$line" >> "$LOG"
-  fi
-}
+  # $line is guaranteed non-empty here (see the exit-if-empty check above).
+  printf '%s\n' "$line" >> "$LOG"
+) 9>"$LOG.lock" 2>/dev/null || printf '%s\n' "$line" >> "$LOG"
 
 exit 0
