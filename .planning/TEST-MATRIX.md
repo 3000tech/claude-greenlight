@@ -50,9 +50,8 @@ naming a concrete fallback.
 
 ### 1. Hooks-only viable?
 
-- **Yes / No:** _(fill in)_
-- **Justification:** _(one line — reference the specific cases that decide
-  it: #6 AUQ, #8 interrupt, and the #17/#18 design question)_
+- **Yes / No:** **No** — ma il residuo non-hook è molto più piccolo del previsto: staleness + ponte legacy di migrazione, non un doppio motore permanente.
+- **Justification:** #6 AUQ è diventato hook-nativo su cc 2.1.220 (PreToolUse+PermissionRequest — ricerca smentita dal vivo) e #17 ha segnale nativo (background_tasks nello Stop), MA #8 (Esc), il deny di #5 e #9 (kill/stop/pause) sono hook-muti totali: nessun set di eventi può coprire un turno che muore — serve rilevazione di vitalità.
 
 ### 2. Which fallbacks survive?
 
@@ -64,22 +63,24 @@ mechanism that does not exist yet.
 
 | Case # | Hook signal observed | Fallback that covers it | Why this fallback |
 |--------|----------------------|--------------------------|--------------------|
-| _(fill in)_ | | | |
+| 8 (Esc) | Nessuno dopo PreToolUse — silenzio totale (live 2026-07-29) | heartbeat silence + `docker ps` cross-check | Non esiste evento su cui agganciarsi: solo la vitalità può sbloccare un working stantio |
+| 5-nega | Nessuno dopo PermissionRequest — PermissionDenied mai fire (0 su 1300+ righe) | heartbeat silence + `docker ps` cross-check | Stesso silenzio a forma di interrupt del caso 8 |
+| 9 (kill/stop/pause) | Nessuno — SessionEnd esiste solo per uscite pulite (live: kill, stop garbato e pause tutti muti) | `docker ps` cross-check, con distinzione paused (vivo/congelato) ≠ exited (morto) | La morte a livello container è invisibile agli hook per definizione |
+| 19 (prompt abbandonato) | Solo UserPromptSubmit, heartbeat mai partito (dedotto da 8+9, non campionato) | heartbeat silence con finestra corta post-UserPromptSubmit + `docker ps` | Un turno morto pre-tool non avrà mai heartbeat |
+| 18 (badge 🔧/⏳) | Nessuno nel design a state file (deferito per decisione V2-01) | shell_tracker (jsonl), invariato | Serve solo al dettaglio badge: lo STATO async è coperto da background_tasks_count |
+| 21 (container senza hook) | Nessuno per definizione | targeted jsonl peek (parsing legacy per-sessione) come ponte di migrazione | Le immagini vecchie restano visibili finché gli hook non sono ovunque |
 
 ### 3. Notification timing (case #2)
 
 - **Measured gap** between perceived render end and the `Stop` event's
-  `ts_ms`: _(fill in)_
-- **Decision:** drop the NOTES.md debounce idea entirely, or keep it —
-  _(fill in)_
+  `ts_ms`: non misurato frame-accurate; 30+ campioni di Stop tutti coerenti col fine turno percepito, overlay verde + notifica Telegram verificati live dall'utente senza anomalie di anticipo.
+- **Decision:** drop the NOTES.md debounce idea entirely, or keep it — **tenere il debounce esistente** (già implementato, innocuo); la misura precisa render-vs-Stop arriva gratis dallo shadow mode di Phase 2 (log delle divergenze), decisione definitiva lì.
 
 ### 4. Async-work-in-flight design (case #17)
 
-- **What the live data showed:** _(fill in — does `Stop` fire while
-  background shells/agents are still running?)_
+- **What the live data showed:** Sì: Stop fire con bg task in volo (13:02:38, task vivo fino a 13:03:02) — il verde-su-Stop naive è un rischio reale. MA lo stesso Stop porta background_tasks: il conteggio (btc) è ora catturato dal logger e già campionato live (btc=1).
 - **Decision:** keep current grey-while-working semantics (needs
-  `shell_tracker`), or accept green-on-`Stop` — per D-07, preserve current
-  semantics unless live data contradicts them: _(fill in)_
+  `shell_tracker`), or accept green-on-`Stop` — per D-07, preserve current semantics unless live data contradicts them: **semantica attuale confermata** (overlay grigio tenuto durante bg task, verificato live) e implementabile hook-nativamente: Stop con background_tasks_count>0 → resta working; shell_tracker non serve più per lo stato, solo per i badge (V2-01).
 
 ---
 
