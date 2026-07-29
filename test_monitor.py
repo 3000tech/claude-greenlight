@@ -1207,5 +1207,91 @@ class Goal12_ContainerInfoShape(unittest.TestCase):
         self.assertIn("hostname_to_status", container_info)
 
 
+class Goal13_HooklessFallback(unittest.TestCase):
+    """The migration bridge (ENG-05, TEST-MATRIX case 21): a session legacy
+    sees but that has no state file — a container running an image without
+    the hooks installed — must not vanish from the shadow list."""
+
+    def setUp(self) -> None:
+        self._tmp_projects = TemporaryDirectory()
+        self._tmp_state = TemporaryDirectory()
+        self.projects_root = Path(self._tmp_projects.name)
+        self.state_root = Path(self._tmp_state.name)
+        self._orig_projects = monitor.PROJECTS_DIR
+        self._orig_state = monitor.STATE_DIR
+        monitor.PROJECTS_DIR = self.projects_root
+        monitor.STATE_DIR = self.state_root
+
+    def tearDown(self) -> None:
+        monitor.PROJECTS_DIR = self._orig_projects
+        monitor.STATE_DIR = self._orig_state
+        self._tmp_projects.cleanup()
+        self._tmp_state.cleanup()
+
+    def _write_state(self, session_id: str, **fields) -> Path:
+        record = {
+            "state": "waiting",
+            "ts": "2026-07-29T00:00:00Z",
+            "ts_ms": int(time.time() * 1000),
+            "cwd": "/workspace",
+            "hostname": "container-1",
+            "last_event": "Stop",
+            "background_tasks_count": 0,
+        }
+        record.update(fields)
+        f = self.state_root / f"{session_id}.json"
+        f.write_text(json.dumps(record), encoding="utf-8")
+        return f
+
+    def test_state_file_and_disjoint_legacy_session_both_appear(self):
+        self._write_state("a")
+        _write_session(self.projects_root, "-workspace-b", [
+            _assistant([_text_block()], session_id="b"),
+        ])
+        legacy = scan(sessionid_to_label={"b": "L"})
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(sorted(s["key"] for s in sessions), ["a", "b"])
+
+    def test_legacy_session_sharing_key_with_state_file_is_not_duplicated(self):
+        self._write_state("a", state="working")
+        _write_session(self.projects_root, "-workspace-a", [
+            _assistant([_text_block()], session_id="a"),
+        ])
+        legacy = scan(sessionid_to_label={"a": "L"})
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["status"], "WORKING")
+        self.assertNotIn("legacy_origin", sessions[0])
+
+    def test_no_state_files_merged_list_equals_legacy_entry_for_entry(self):
+        _write_session(self.projects_root, "-workspace-b", [
+            _assistant([_text_block()], session_id="b"),
+        ])
+        legacy = scan(sessionid_to_label={"b": "L"})
+        sessions = monitor.scan_state_files(legacy_sessions=legacy)
+        self.assertEqual([s["key"] for s in sessions], [s["key"] for s in legacy])
+
+    def test_omitted_legacy_sessions_falls_back_to_internal_scan(self):
+        _write_session(self.projects_root, "-workspace-b", [
+            _assistant([_text_block()], session_id="b"),
+        ])
+        sessions = monitor.scan_state_files(sessionid_to_label={"b": "L"})
+        self.assertEqual([s["key"] for s in sessions], ["b"])
+
+    def test_carried_through_entries_marked_legacy_origin(self):
+        _write_session(self.projects_root, "-workspace-b", [
+            _assistant([_text_block()], session_id="b"),
+        ])
+        self._write_state("a")
+        legacy = scan(sessionid_to_label={"b": "L"})
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"a": "L", "b": "L"}, legacy_sessions=legacy)
+        by_key = {s["key"]: s for s in sessions}
+        self.assertTrue(by_key["b"].get("legacy_origin"))
+        self.assertNotIn("legacy_origin", by_key["a"])
+
+
 if __name__ == "__main__":
     unittest.main()

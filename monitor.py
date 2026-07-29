@@ -534,7 +534,8 @@ def _state_record_age(obj: dict, mtime: float, now: float) -> float:
 
 def scan_state_files(label_map: dict[str, str] | None = None,
                       sessionid_to_label: dict[str, str] | None = None,
-                      container_info: dict | None = None) -> list[dict]:
+                      container_info: dict | None = None,
+                      legacy_sessions: list[dict] | None = None) -> list[dict]:
     """Shadow-mode sibling of scan(): derives one verdict per session from
     ~/.claude/monitor-state/*.json (written atomically by
     hooks/state-writer.sh) instead of parsing any jsonl.
@@ -574,77 +575,98 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     this best-effort sweep only ever catches the one hook-silent path — a
     killed container — well after MAX_AGE_SEC has already hidden it
     (STATE_PRUNE_AGE_SEC, 24h, is 24x the one-hour visibility window).
+
+    `legacy_sessions` (ENG-05's migration bridge, TEST-MATRIX case 21): once
+    the state-file-derived list above is built, every session `refresh()`'s
+    already-computed legacy `scan()` saw but that has no state file — a
+    container running an image without the hooks installed, by definition —
+    is carried through unchanged, tagged with a shadow-only `legacy_origin`
+    marker so divergence review can tell a genuine state-file verdict apart
+    from a session simply copied across. When `legacy_sessions` is None,
+    `scan(label_map, sessionid_to_label)` runs internally instead, so a
+    standalone caller (the `--state-files` diagnostic mode) still sees the
+    complete picture without a second full jsonl scan every tick.
     """
-    if not STATE_DIR.is_dir():
-        return []
-    now = time.time()
-    try:
-        entries = list(STATE_DIR.glob("*.json"))
-    except OSError:
-        return []
-    sessions = []
-    for f in entries:
-        session_id = f.stem
+    sessions: list[dict] = []
+    if STATE_DIR.is_dir():
+        now = time.time()
         try:
-            mtime = f.stat().st_mtime
+            entries = list(STATE_DIR.glob("*.json"))
         except OSError:
-            continue
-        age_by_mtime = now - mtime
-        if age_by_mtime > STATE_PRUNE_AGE_SEC:
+            entries = []
+        for f in entries:
+            session_id = f.stem
             try:
-                f.unlink()
+                mtime = f.stat().st_mtime
             except OSError:
-                pass
+                continue
+            age_by_mtime = now - mtime
+            if age_by_mtime > STATE_PRUNE_AGE_SEC:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+                continue
+            if age_by_mtime > MAX_AGE_SEC:
+                continue
+            obj = _read_state_file(f)
+            if obj is None:
+                continue
+            hostname = obj.get("hostname")
+            hostname = hostname if isinstance(hostname, str) and hostname else None
+            name = sessionid_to_label.get(session_id) if sessionid_to_label else None
+            if name is None and container_info and hostname:
+                name = container_info.get("hostname_to_label", {}).get(hostname)
+            if name is None:
+                continue
+            age = _state_record_age(obj, mtime, now)
+            state_val = obj.get("state")
+            last_event = obj.get("last_event")
+            status, dot, color, rank = _state_to_status(state_val)
+            if status == "WORKING":
+                window = (STATE_PROMPT_STALE_SEC if last_event == "UserPromptSubmit"
+                          else STATE_HEARTBEAT_STALE_SEC)
+                if age > window:
+                    container_status = None
+                    if container_info and hostname:
+                        container_status = container_info.get(
+                            "hostname_to_status", {}).get(hostname)
+                    if container_status != "paused":
+                        status, dot, color, rank = "WAITING", "●", "#4ade80", 1
+            bg_count = obj.get("background_tasks_count")
+            if not isinstance(bg_count, (int, float)):
+                bg_count = None
+            sessions.append({
+                "key": session_id,
+                "name": name,
+                "session_id": session_id,
+                "encoded_dir": "",
+                "dot": dot,
+                "dot_color": color,
+                "bg": bool(bg_count and bg_count > 0),
+                "monitors": 0,
+                "agents": 0,
+                "status": status,
+                "rank": rank,
+                "age": age,
+                "mtime": mtime,
+                "action": _state_action_label(last_event),
+                "state": state_val,
+                "last_event": last_event,
+                "hostname": obj.get("hostname"),
+                "background_tasks_count": bg_count,
+            })
+
+    if legacy_sessions is None:
+        legacy_sessions = scan(label_map, sessionid_to_label)
+    seen_keys = {s["key"] for s in sessions}
+    for legacy in legacy_sessions:
+        if legacy["key"] in seen_keys:
             continue
-        if age_by_mtime > MAX_AGE_SEC:
-            continue
-        obj = _read_state_file(f)
-        if obj is None:
-            continue
-        hostname = obj.get("hostname")
-        hostname = hostname if isinstance(hostname, str) and hostname else None
-        name = sessionid_to_label.get(session_id) if sessionid_to_label else None
-        if name is None and container_info and hostname:
-            name = container_info.get("hostname_to_label", {}).get(hostname)
-        if name is None:
-            continue
-        age = _state_record_age(obj, mtime, now)
-        state_val = obj.get("state")
-        last_event = obj.get("last_event")
-        status, dot, color, rank = _state_to_status(state_val)
-        if status == "WORKING":
-            window = (STATE_PROMPT_STALE_SEC if last_event == "UserPromptSubmit"
-                      else STATE_HEARTBEAT_STALE_SEC)
-            if age > window:
-                container_status = None
-                if container_info and hostname:
-                    container_status = container_info.get(
-                        "hostname_to_status", {}).get(hostname)
-                if container_status != "paused":
-                    status, dot, color, rank = "WAITING", "●", "#4ade80", 1
-        bg_count = obj.get("background_tasks_count")
-        if not isinstance(bg_count, (int, float)):
-            bg_count = None
-        sessions.append({
-            "key": session_id,
-            "name": name,
-            "session_id": session_id,
-            "encoded_dir": "",
-            "dot": dot,
-            "dot_color": color,
-            "bg": bool(bg_count and bg_count > 0),
-            "monitors": 0,
-            "agents": 0,
-            "status": status,
-            "rank": rank,
-            "age": age,
-            "mtime": mtime,
-            "action": _state_action_label(last_event),
-            "state": state_val,
-            "last_event": last_event,
-            "hostname": obj.get("hostname"),
-            "background_tasks_count": bg_count,
-        })
+        carried = dict(legacy)
+        carried["legacy_origin"] = True
+        sessions.append(carried)
+
     order = launcher_order()
     big = len(order) + 1
     sessions.sort(key=lambda s: (order.get(s["name"], big), -s["mtime"]))
@@ -1723,6 +1745,7 @@ class MonitorApp:
             shadow_sessions = scan_state_files(
                 self._cached_label_map, self._sessionid_to_label,
                 container_info=self._cached_container_info,
+                legacy_sessions=sessions,
             )
         except Exception:
             shadow_sessions = []
