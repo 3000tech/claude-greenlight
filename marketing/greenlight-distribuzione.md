@@ -11,7 +11,7 @@ finito, e a quel punto è persa.
 
 ## Fase 0 — Preparazione (~30 min)
 
-- [ ] **GIF demo, 10-15 secondi**
+- [x] **GIF demo, 10-15 secondi**
       Sessione che lavora → diventa verde → toast di Windows.
       Tool: ScreenToGif. Mettila in cima al README, sopra gli screenshot statici.
       *Perché:* il valore del tool è temporale, uno screenshot non lo mostra.
