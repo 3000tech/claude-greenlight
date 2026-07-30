@@ -21,11 +21,11 @@ finito, e a quel punto è persa.
       *Perché:* cambia la percezione da "repo in corso" a "cosa usabile",
       e ti dà un link stabile da citare ovunque.
 
-- [ ] **Topics GitHub** — aggiungi ai 6 esistenti:
+- [x] **Topics GitHub** — aggiungi ai 6 esistenti:
       `claude-code-hooks`, `developer-tools`, `notifications`, `productivity`
       *Perché:* è così che ti trovano navigando per topic.
 
-- [ ] **La frase-problema**, in cima al README prima di tutto il resto:
+- [x] **La frase-problema**, in cima al README prima di tutto il resto:
       > Su Windows con Claude Code dentro container WSL2/Docker, nessun monitor
       > vede lo stato live delle sessioni.
 
