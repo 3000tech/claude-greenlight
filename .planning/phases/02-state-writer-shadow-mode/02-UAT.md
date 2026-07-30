@@ -411,20 +411,20 @@ not left blank.
 
 | Section / Case | Date | CC version | Outcome |
 |---|---|---|---|
-| Setup (registration counts) | | | |
+| Setup (registration counts) | 2026-07-30 | 2.1.220 | PASS — state-writer 10, working-lock 3, auq-lock 4, event-logger intact; state files + divergence log both live |
 | A — zero visible change | | | |
-| B1 — container-status enum | | | |
-| B2 — atomicity under kill | | | |
-| C1 — Esc interrupt | | | |
-| C2 — permission denied | | | |
-| C3 — container killed | | | |
-| C4 — container paused/unpaused | | | |
-| C5 — abandoned pre-tool prompt | | | |
-| C6 — hookless container | | | |
-| C7 — two containers, same /workspace | | | |
-| D — diagnostic mode (`--state-files`) | | | |
-| E — divergence log accumulating | | | |
-| F — lock hooks (AUQ / permission / long tool) | | | |
+| B1 — container-status enum | 2026-07-30 | 2.1.220 | PASS — `running` / `paused` observed; `paused` matches the guard's literal exactly. Stopped state unobservable: containers run with `--rm`, `docker stop` auto-removes (`no such object`) — removed containers never reach the guard's codepath, per this runbook's own note |
+| B2 — atomicity under kill | 2026-07-30 | 2.1.220 | PASS — `docker kill` on container aaeacb4c551b mid-session: all 4 state files parse, no stale tmp files. Killed session's file frozen intact at `last_event=UserPromptSubmit` |
+| C1 — Esc interrupt | 2026-07-30 | 2.1.220 | PASS with INVERTED divergence vs this runbook's prediction — session a7a22920 (claudia, 3773d4f725d6), Esc mid-python-sleep: state file froze at `PostToolBatch`/`working` (hook silence confirmed). BUT the interrupt DOES advance the jsonl on CC 2.1.220: the stale-lock guard released working-lock, legacy flipped WAITING at ~90s (panel grey→green observed live at 09:33:46). Divergence opened `legacy=WAITING vs shadow=WORKING` — legacy MORE timely here (90s vs shadow's 600s heartbeat window). Episode ran 39 ticks (~3.5 min), closed when the user resumed the session. KEY Section E / Phase 3 finding: the Esc case REQUIRES the hybrid model's jsonl fallback — a pure hook engine would regress interrupt recovery from ~90s to 600s |
+| C2 — permission denied | 2026-07-30 | 2.1.220 | PASS — session 774c198d (dev-tools): `PermissionRequest` → `needs_input`/WAITING instantly (legacy still ABSENT at that tick); legacy caught up via auq-lock ~5-10s later, episode auto-resolved. Post-deny hook silence confirmed live: shadow stuck at `needs_input` ~45s (9 ticks) until turn end — the known `PermissionDenied`-never-fires gap, recorded as a Section E finding |
+| C3 — container killed | 2026-07-30 | 2.1.220 | PASS with corrected expectation — two live runs (bg-gate variant 254f2027/465baf32639c, canonical mid-turn 7f317b9a/b699f1ddd1f0): NO divergence ever opens, because BOTH engines drop a killed container's session at label-resolution time (shadow: `scan_state_files` name-`continue`; legacy: deliberate stale-sessionId drop, monitor.py ~1000). Session vanishes from the overlay instantly on both sides — identical, symmetric, and correct (a dead session can't need input). This runbook's original prediction (legacy pinned WORKING up to 1h by working-lock) was wrong: the lock exists (verified: lock file present post-kill) but never becomes visible — label resolution discards the session first. Recorded as a Section E finding: the 600s staleness recovery only matters for live-container hook-silent cases (C1/C4), not for kills |
+| C4 — container paused/unpaused | 2026-07-30 | 2.1.220 | PASS — session a7a22920 (claudia, 3773d4f725d6) paused 09:37→09:54 (17 min, well past the 600s window): shadow NEVER flipped to WAITING (D-06 paused guard verified live; watch ran to 09:53:29 clean). Bonus finding: LEGACY drops a paused session entirely (docker exec unreachable → name unresolvable → panel row vanishes), while shadow keeps it via `hostname_to_label` — the exact divergence `diff_verdicts()`'s docstring names, logged 09:37:37, held open the whole pause, resolved 09:54:19 within 5s of unpause (heartbeats resumed spontaneously, `Stop`→`waiting`). Panel-visibility idea captured as todo `2026-07-30-show-paused-container-sessions-…` (commit 0808c02) |
+| C5 — abandoned pre-tool prompt | 2026-07-30 | 2.1.220 | PASS (reproduced via B2's kill, which landed pre-first-tool): state file frozen at `UserPromptSubmit`/`working`; no divergence record ever opened past the 90s mark — both engines recovered near-simultaneously via their matched 90s windows, exactly the confirmation this case asks for |
+| C6 — hookless container | 2026-07-30 | 2.1.220 | N/A on this environment (literal trigger impossible: `~/.claude` is bind-mounted into every container, so hooks are always installed) — BUT the `legacy_origin` bridge C6 exists to prove was exercised live by an equivalent path: session f903ed8f lost its state file (SessionEnd `rm -f`) while its jsonl was still legacy-visible; the bridge carried it through with the identical legacy verdict, visible in the panel, zero divergence records. Bridge behavior also covered by the automated suite (163 green) |
+| C7 — two containers, same /workspace | 2026-07-30 | 2.1.220 | PASS — three parallel sessions (claude-greenlight, yunoai, claudia), ALL with cwd `/workspace`, rendered with distinct correct labels in `--state-files` mode; state files keyed by session_id with per-container hostname made the legacy cwd-collision structurally impossible. Corroborated by the whole day's divergence log: labels never crossed between containers |
+| D — diagnostic mode (`--state-files`) | 2026-07-30 | 2.1.220 | PASS — normal monitor closed, diagnostic launched on Windows: shadow-engine rendering looked correct to the user (labels, colors); three same-cwd sessions shown distinctly (see C7). Badge caveat understood as by-design. Normal monitor restarted afterwards |
+| E — divergence log accumulating | 2026-07-30 | 2.1.220 | PASS — episodic records accumulating and parseable all day; review conversation itself stays scheduled for end of the ~1-week window (D-03) |
+| F — lock hooks (AUQ / permission / long tool) | 2026-07-30 | 2.1.220 | PASS — AUQ: card open on claudia → panel green instantly, `auq-locks/a7a22920` fresh (10:06); bonus: shadow state file also flipped `needs_input` via `Notification` — both engines agree on AUQ waits on CC 2.1.220. Permission prompt: green at prompt, grey on deny-and-resume, green at turn end (observed live under C2). Long tool: sessions stayed grey through multi-minute python sleeps with working-lock present and pinned (observed under C1/C3 setup). SW-03 non-regression holds on the real machine |
 
 ---
 
@@ -435,7 +435,7 @@ accumulating parseable records — filled in during/after this plan's Task 2 che
 
 ### 1. Setup — state writer registered, existing hooks undisturbed
 expected: registration counts match (state-writer.sh: 10; working-lock.sh: 3; auq-lock.sh: 4); event-logger.sh count unchanged
-result: pending
+result: pass — verified in-session 2026-07-30 (CC 2.1.220): counts 10/3/4 confirmed via jq; state files updating in ~/.claude/monitor-state/; divergence log accumulating episodic records with clean diverged/resolved pairs
 
 ### 2. Section A — zero visible change
 expected: no perceptible difference across an ordinary hour of use; anything noticed (better or worse) recorded as a defect
@@ -443,32 +443,32 @@ result: pending
 
 ### 3. Section B1 — container-status enum
 expected: three literal docker status strings recorded (running/paused/stopped variant)
-result: pending
+result: pass — 2026-07-30 (CC 2.1.220), container `claudia` (b6438f373adf): `running` and `paused` observed live; `paused` exactly matches the D-06 guard literal. Stopped state structurally unobservable on this machine: containers launched with `--rm` are auto-removed on stop (`docker inspect` → `no such object`), so a stopped-but-not-removed container never exists and never reaches the staleness-guard codepath (outcome anticipated by this runbook's B1 step 3 note)
 
 ### 4. Section B2 — atomicity under mid-write kill
 expected: no corrupt state files after a mid-turn kill; no stale tmp file ever read as a session
-result: pending
+result: pass — 2026-07-30 (CC 2.1.220): `docker kill aaeacb4c551b` with session 2c546472 live; every file in ~/.claude/monitor-state/ parses via `jq -e`, zero `*.tmp.*` leftovers. Killed session's file frozen cleanly at `state=working`, `last_event=UserPromptSubmit` (kill landed before the first tool heartbeat — so the 90s prompt-stale window governs recovery, observed under C3)
 
 ### 5. Section C1-C7 — hook-silent cases
 expected: each case's state file / staleness window / divergence-log behavior matches this runbook's description
-result: pending
+result: pass — 2026-07-30 (CC 2.1.220), all seven cases closed live (see table for detail). Two outcomes corrected the runbook's predictions, both recorded as Section E findings: C1 divergence runs INVERTED (Esc advances the jsonl → legacy recovers at 90s, shadow at 600s → the Phase 3 flip REQUIRES the hybrid jsonl fallback for interrupts), and C3 produces NO divergence at all (both engines symmetrically drop killed-container sessions at label resolution). C4 additionally surfaced that legacy loses paused sessions entirely while shadow keeps them (todo captured). C6 closed as N/A-with-indirect-live-evidence
 
 ### 6. Section D — diagnostic mode
 expected: `--state-files` renders/notifies from the shadow engine; singleton behavior confirmed; badge caveat confirmed as by-design
-result: pending
+result: pass — 2026-07-30 (CC 2.1.220): user ran the diagnostic on the real machine with three live sessions; labels and colors correct, three same-cwd sessions distinct (C7), normal monitor restarted after
 
 ### 7. Section E — divergence log accumulating
 expected: `~/.claude/monitor-divergence.log` non-empty and parseable after a few hours of real use
-result: pending
+result: pass — 2026-07-30 (CC 2.1.220): log accumulating clean episodic diverged/resolved pairs across every case exercised today (session-start transients, C1 inverted, C2 canonical, C4 paused-drop); all records parse via jq
 
 ### 8. Section F — lock hooks non-regression
 expected: AUQ modal, permission prompt, and long tool call all behave exactly as before this phase
-result: pending
+result: pass — 2026-07-30 (CC 2.1.220): all three verified live (AUQ green + fresh lock file; permission prompt green/grey/green cycle; long tools grey with working-lock pinned). Bonus finding: the state writer also catches AUQ waits via Notification — shadow and legacy agree on needs_input
 
 ## Summary
 
 total: 8
-passed: 0
+passed: 7
 issues: 0
-pending: 8
+pending: 1
 skipped: 0
