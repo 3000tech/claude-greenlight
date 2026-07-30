@@ -1541,9 +1541,15 @@ class MonitorApp:
         try:
             w, h = win.winfo_width(), win.winfo_height()
             sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            x = self.root.winfo_x() + max(0, (self.root.winfo_width() - w) // 2)
-            y = self.root.winfo_y() - h - 8
-            win.geometry(f"+{max(0, min(x, sw - w))}+{max(0, min(y, sh - h))}")
+            mx, my = self.root.winfo_x(), self.root.winfo_y()
+            x = mx + max(0, (self.root.winfo_width() - w) // 2)
+            y = my - h - 8
+            # Same primary-screen-only clamp as the toast: never drag the
+            # dialog off a secondary screen the monitor window lives on.
+            if 0 <= mx < sw and 0 <= my < sh:
+                x = max(0, min(x, sw - w))
+                y = max(0, min(y, sh - h))
+            win.geometry(f"+{x}+{y}")
         except Exception:
             pass
         entry.focus_set()
@@ -1665,13 +1671,19 @@ class MonitorApp:
                 mw = self.root.winfo_width()
                 x = mx + mw - w
                 y = my - h - 8
+                anchored = True
             except Exception:
                 x = sw - w - 30
                 y = sh - h - 200
-            # Clamp inside the screen so the toast can't render off-screen on
-            # an unusually small display or after a monitor change.
-            x = max(0, min(x, sw - w))
-            y = max(0, min(y, sh - h))
+                anchored = False
+            # Clamp inside the screen so the toast can't render off-screen —
+            # but only when the monitor window itself is on the primary
+            # display: winfo_screenwidth/height only describe the primary,
+            # and clamping against them would drag the toast away from a
+            # monitor window parked on a secondary screen.
+            if not anchored or (0 <= mx < sw and 0 <= my < sh):
+                x = max(0, min(x, sw - w))
+                y = max(0, min(y, sh - h))
             toast.geometry(f"{w}x{h}+{x}+{y}")
 
             def dismiss(_e=None):
