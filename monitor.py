@@ -175,8 +175,11 @@ DEFAULT_CONFIG = {
     # Telegram push to the phone. Independent of "local" — silence one without
     # the other (e.g. mute the desk but keep the phone, or vice versa).
     "telegram": True,
-    # {session_key: label} — runtime session labels, persisted so they
-    # survive a monitor restart. Pruned at startup once the session is gone.
+    # {alias_key: label} — runtime session labels, persisted so they survive
+    # a monitor restart AND a sessionId rotation (/clear, /resume, CLI
+    # restart): alias_key is the container hostname (namespaced with
+    # ALIAS_HOST_PREFIX) when resolvable, or today's row key otherwise. See
+    # derive_alias_key(). Pruned at startup once the container is gone.
     "aliases": {},
 }
 
@@ -462,6 +465,28 @@ def resolve_alias(answer: str | None, previous: str = "") -> str:
     return answer.strip()
 
 
+# Namespaces container-derived alias keys so a hostname string can never
+# collide with (and silently steal) a raw sessionId- or dir-fallback-keyed
+# alias entry already sitting in the same config dict.
+ALIAS_HOST_PREFIX = "host:"
+
+
+def derive_alias_key(hostname: str | None, fallback_key: str) -> str:
+    """Resolve the identity a session label is stored under.
+
+    The user is labelling the container/terminal, not the conversation: a
+    label must outlive a sessionId rotation (/clear, /resume, CLI restart).
+    When the container's hostname is known, it becomes the alias identity
+    (namespaced with ALIAS_HOST_PREFIX, both engines can observe it, and it
+    is stable across those rotations). When it isn't resolvable (no docker,
+    no state-file hostname), `fallback_key` — today's row key — is returned
+    unchanged, preserving existing behaviour exactly for those sessions.
+    """
+    if isinstance(hostname, str) and hostname:
+        return f"{ALIAS_HOST_PREFIX}{hostname}"
+    return fallback_key
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 state-writer engine (shadow mode) — reads ~/.claude/monitor-state/
 # (hooks/state-writer.sh's output) as a second, independent verdict source.
@@ -670,10 +695,11 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 "last_event": last_event,
                 "hostname": obj.get("hostname"),
                 "background_tasks_count": bg_count,
+                "alias_key": derive_alias_key(hostname, session_id),
             })
 
     if legacy_sessions is None:
-        legacy_sessions = scan(label_map, sessionid_to_label)
+        legacy_sessions = scan(label_map, sessionid_to_label, container_info=container_info)
     seen_keys = {s["key"] for s in sessions}
     for legacy in legacy_sessions:
         if legacy["key"] in seen_keys:
@@ -894,7 +920,8 @@ def state_files_mode(argv: list[str] | None = None) -> bool:
 
 
 def scan(label_map: dict[str, str] | None = None,
-         sessionid_to_label: dict[str, str] | None = None) -> list[dict]:
+         sessionid_to_label: dict[str, str] | None = None,
+         container_info: dict | None = None) -> list[dict]:
     if not PROJECTS_DIR.is_dir():
         return []
     now = time.time()
@@ -1005,10 +1032,14 @@ def scan(label_map: dict[str, str] | None = None,
         if name is None:
             continue
         key = session_id or f"{proj_dir.name}:{latest.name}"
+        hostname = None
+        if session_id and container_info:
+            hostname = container_info.get("sessionid_to_hostname", {}).get(session_id)
         sessions.append({
             "key": key,
             "name": name,
             "session_id": session_id,
+            "alias_key": derive_alias_key(hostname, key),
             "encoded_dir": proj_dir.name,
             "dot": dot,
             "dot_color": color,
@@ -1040,12 +1071,16 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
     `label_map` maps encoded session-dir names (as they appear under
     ~/.claude/projects/) to the container's launcher label; `container_info`
     is the Phase 2 state-file engine's container-identity/liveness
-    cross-check (D-05, ENG-03) — {"hostname_to_label": ..., "hostname_to_status": ...},
-    keyed by the container hostname the state writer captures at write
-    time, built from the one container-inspection call below (no second
-    subprocess call added).
+    cross-check (D-05, ENG-03) — {"hostname_to_label": ..., "hostname_to_status": ...,
+    "sessionid_to_hostname": ...}, keyed by the container hostname the state
+    writer captures at write time, built from the one container-inspection
+    call below (no second subprocess call added). `sessionid_to_hostname`
+    also feeds derive_alias_key() so a session's alias survives a sessionId
+    rotation.
     """
-    empty_container_info = {"hostname_to_label": {}, "hostname_to_status": {}}
+    empty_container_info = {
+        "hostname_to_label": {}, "hostname_to_status": {}, "sessionid_to_hostname": {},
+    }
     docker = shutil.which("docker")
     if not docker:
         return [], {}, {}, dict(empty_container_info)
@@ -1087,6 +1122,7 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
     container_labels: dict[str, str] = {}
     hostname_to_label: dict[str, str] = {}
     hostname_to_status: dict[str, str] = {}
+    cid_to_hostname: dict[str, str] = {}
     if ids:
         try:
             insp = subprocess.run(
@@ -1120,6 +1156,7 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
                 if len(parts) >= 4 and parts[3]:
                     hostname_to_label[parts[3]] = cid_to_label.get(cid, "")
                     hostname_to_status[parts[3]] = parts[2] if len(parts) >= 3 else ""
+                    cid_to_hostname[cid] = parts[3]
             for encoded, labels in pending.items():
                 # Only safe to map encoded_dir → label without docker exec when
                 # exactly one container claims this dir. Two containers with the
@@ -1135,21 +1172,31 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
         container_labels = dict(cid_to_label)
 
     sessionid_to_label: dict[str, str] = {}
+    sessionid_to_hostname: dict[str, str] = {}
     if container_labels:
-        sessionid_to_label = query_container_sessionids(
-            docker, container_labels, kwargs
+        sessionid_to_label, sessionid_to_hostname = query_container_sessionids(
+            docker, container_labels, kwargs, cid_to_hostname
         )
     return rows, label_map, sessionid_to_label, {
         "hostname_to_label": hostname_to_label,
         "hostname_to_status": hostname_to_status,
+        "sessionid_to_hostname": sessionid_to_hostname,
     }
 
 
 def query_container_sessionids(
-    docker: str, container_labels: dict[str, str], kwargs: dict
-) -> dict[str, str]:
-    """For each container, read its ~/.claude/sessions/*.json and map sessionId → project label."""
+    docker: str, container_labels: dict[str, str], kwargs: dict,
+    cid_to_hostname: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """For each container, read its ~/.claude/sessions/*.json and map sessionId → project label.
+
+    Also returns sessionId → hostname (from `cid_to_hostname`, when known), so
+    the caller can feed derive_alias_key() the container identity a label
+    should stick to.
+    """
     result: dict[str, str] = {}
+    sessionid_to_hostname: dict[str, str] = {}
+    cid_to_hostname = cid_to_hostname or {}
     # Claude Code writes /tmp/claude-ctx-<sessionId>.json inside each container.
     # /tmp is container-local (unlike ~/.claude which is bind-mounted), so
     # listing the filenames gives us exactly THIS container's sessionId(s).
@@ -1167,8 +1214,12 @@ def query_container_sessionids(
         if out.returncode != 0 or not out.stdout:
             continue
         for match in re.finditer(r"claude-ctx-([0-9a-f-]+)\.json", out.stdout):
-            result[match.group(1)] = label
-    return result
+            sid = match.group(1)
+            result[sid] = label
+            hostname = cid_to_hostname.get(cid)
+            if hostname:
+                sessionid_to_hostname[sid] = hostname
+    return result, sessionid_to_hostname
 
 
 class MonitorApp:
@@ -1259,6 +1310,11 @@ class MonitorApp:
         # sessions sharing a launcher label. Same dict object as the config's
         # "aliases" so save_config() persists edits across monitor restarts.
         self._session_aliases: dict[str, str] = self.config["aliases"]
+        # Row key -> alias key, rebuilt every tick in refresh() from the
+        # rendered session list. Lets every alias site key off the container
+        # identity (derive_alias_key) while still being addressed by today's
+        # row key (row bindings and lookups happen at click/render time).
+        self._alias_keys: dict[str, str] = {}
         # Dropped once, at the first non-empty scan: persisted aliases whose
         # session ended while the monitor was off.
         self._aliases_pruned = False
@@ -1287,7 +1343,9 @@ class MonitorApp:
         # from scan_containers()'s fourth return element, feeding
         # scan_state_files()'s staleness gate and paused-container label
         # fallback. Empty maps until the first docker tick completes.
-        self._cached_container_info: dict = {"hostname_to_label": {}, "hostname_to_status": {}}
+        self._cached_container_info: dict = {
+            "hostname_to_label": {}, "hostname_to_status": {}, "sessionid_to_hostname": {},
+        }
         self._docker_query_inflight = False
         # Phase 2 shadow engine (D-01/ENG-01): read once at startup from the
         # `--state-files` CLI flag via state_files_mode() below. False keeps
@@ -1467,6 +1525,35 @@ class MonitorApp:
         except Exception:
             pass
 
+    def _alias_key(self, key: str) -> str:
+        """Resolve a row key to the identity its label is stored under.
+
+        Backed by self._alias_keys, rebuilt every tick in refresh() from the
+        rendered session list's alias_key field. Defaults to the row key
+        itself for a row with no resolved container identity (or, before
+        the first refresh() tick, for any row) — today's behaviour.
+        """
+        return self._alias_keys.get(key, key)
+
+    def _prune_aliases(self, sessions: list[dict]) -> None:
+        """One-time startup prune of persisted aliases whose container is gone.
+
+        Runs at most once (self._aliases_pruned) and is a no-op on an empty
+        session list, so a transient empty scan can never wipe every label.
+        "Live" means the alias_key of each session, not its row key, so a
+        label survives a sessionId rotation while a container that's truly
+        gone still drops its alias exactly once, as before.
+        """
+        if self._aliases_pruned or not sessions:
+            return
+        live = {s.get("alias_key") or s["key"] for s in sessions}
+        dead = [k for k in self._session_aliases if k not in live]
+        if dead:
+            for k in dead:
+                del self._session_aliases[k]
+            save_config(self.config)
+        self._aliases_pruned = True
+
     def _bind_alias_click(self, row: dict, key: str) -> None:
         """Make a whole session row/chip clickable to open its label editor.
 
@@ -1577,21 +1664,25 @@ class MonitorApp:
         """
         if self._dialog_open:
             return
+        alias_key = self._alias_key(key)
         row = self._session_rows.get(key) or self._compact_chips.get(key)
         shown = row["name"].cget("text") if row else key
-        current = self._session_aliases.get(key, "")
+        current = self._session_aliases.get(alias_key, "")
         answer = self._ask_label(f"Label for {shown}:", current)
         alias = resolve_alias(answer, current)
         if alias:
-            self._session_aliases[key] = alias
+            self._session_aliases[alias_key] = alias
         else:
-            self._session_aliases.pop(key, None)
+            self._session_aliases.pop(alias_key, None)
         save_config(self.config)  # _session_aliases is self.config["aliases"]
         # Immediate visual feedback — the next refresh tick keeps it in sync.
+        # A container can have more than one visible row key (row key stable,
+        # alias_key resolves a tick later) — update every row/chip whose
+        # resolved alias key matches the one just edited, not only `key`.
         for store in (self._session_rows, self._compact_chips):
-            r = store.get(key)
-            if r is not None:
-                r["alias"].config(text=alias)
+            for k, r in store.items():
+                if self._alias_key(k) == alias_key:
+                    r["alias"].config(text=alias)
 
     def _check_transitions(self, sessions: list[dict]) -> None:
         """Fire a notification when a session flips WORKING → WAITING after a long work stretch.
@@ -1767,7 +1858,7 @@ class MonitorApp:
         elapsed_human = f"{mins}m {secs}s" if mins else f"{secs}s"
         # Append the user's per-session alias when set, so two sessions sharing
         # a project name (e.g. two `yunoai-france`) are still tellable apart.
-        alias = self._session_aliases.get(key, "") if key else ""
+        alias = self._session_aliases.get(self._alias_key(key), "") if key else ""
         shown = f"{label} · {alias}" if alias else label
         toast_title = f"Claude ready — {shown}"
         toast_body = f"Waiting for your input after {elapsed_human} of work."
@@ -1910,7 +2001,8 @@ class MonitorApp:
             self.loading_lbl.pack_forget()
         containers = self._cached_containers
         try:
-            sessions = scan(self._cached_label_map, self._sessionid_to_label)
+            sessions = scan(self._cached_label_map, self._sessionid_to_label,
+                             container_info=self._cached_container_info)
         except Exception:
             sessions = []
 
@@ -1937,17 +2029,18 @@ class MonitorApp:
         # is what makes D-01 structurally enforceable rather than a promise.
         render_sessions = select_render_sessions(sessions, shadow_sessions, self.state_files_mode)
 
-        # One-time prune of persisted aliases: anything whose session ended
-        # while the monitor was off. Gated on a non-empty scan so a transient
-        # empty result can't wipe every label the user set.
-        if not self._aliases_pruned and sessions:
-            live = {s["key"] for s in sessions}
-            dead = [k for k in self._session_aliases if k not in live]
-            if dead:
-                for k in dead:
-                    del self._session_aliases[k]
-                save_config(self.config)
-            self._aliases_pruned = True
+        # Rebuild the row-key -> alias-key map from what's about to render,
+        # before the prune / transitions / rendering below read it. A row
+        # missing alias_key (e.g. a producer that hasn't been updated yet)
+        # degrades to today's behaviour: alias key == row key.
+        self._alias_keys = {
+            s["key"]: (s.get("alias_key") or s["key"]) for s in render_sessions
+        }
+
+        # One-time prune of persisted aliases: anything whose container is
+        # gone. Gated on a non-empty rendered list so a transient empty
+        # result can't wipe every label the user set.
+        self._prune_aliases(render_sessions)
 
         count_txt = f"{len(containers)}d · {len(sessions)}s"
         if self.count_lbl.cget("text") != count_txt:
@@ -2014,7 +2107,7 @@ class MonitorApp:
                 row["dot"].config(fg=s["dot_color"])
             if row["name"].cget("text") != s["name"]:
                 row["name"].config(text=s["name"])
-            alias_txt = self._session_aliases.get(key, "")
+            alias_txt = self._session_aliases.get(self._alias_key(key), "")
             if row["alias"].cget("text") != alias_txt:
                 row["alias"].config(text=alias_txt)
             bg_txt = "⚙" if s["bg"] else ""
@@ -2064,7 +2157,7 @@ class MonitorApp:
                 chip["dot"].config(fg=s["dot_color"])
             if chip["name"].cget("text") != s["name"]:
                 chip["name"].config(text=s["name"])
-            alias_txt = self._session_aliases.get(key, "")
+            alias_txt = self._session_aliases.get(self._alias_key(key), "")
             if chip["alias"].cget("text") != alias_txt:
                 chip["alias"].config(text=alias_txt)
             bg_txt = "⚙" if s["bg"] else ""

@@ -791,6 +791,153 @@ class Goal6b_AliasPersistence(unittest.TestCase):
         self.assertEqual(monitor.load_config()["aliases"], {})
 
 
+class Goal6d_AliasKeyedByContainer(MonitorTestBase):
+    """A label sticks to the container (its hostname), not to the jsonl's
+    sessionId — so a /clear, /resume or CLI restart, which all rotate the
+    sessionId (and therefore the row key), doesn't make the label vanish."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._tmp_cfg = TemporaryDirectory()
+        self._orig_config_file = monitor.CONFIG_FILE
+        monitor.CONFIG_FILE = Path(self._tmp_cfg.name) / "cfg.json"
+
+    def tearDown(self) -> None:
+        monitor.CONFIG_FILE = self._orig_config_file
+        self._tmp_cfg.cleanup()
+        super().tearDown()
+
+    def _fake_app(self):
+        class Fake:
+            def __init__(self):
+                self.config = monitor.load_config()
+                self._session_aliases = self.config["aliases"]
+                self._alias_keys: dict[str, str] = {}
+                self._aliases_pruned = False
+                self._dialog_open = False
+                self._session_rows: dict[str, dict] = {}
+                self._compact_chips: dict[str, dict] = {}
+
+            def _alias_key(self, key):
+                return self._alias_keys.get(key, key)
+
+            def _ask_label(self, prompt, initial):
+                return getattr(self, "_next_answer", None)
+
+        return Fake()
+
+    # -- derive_alias_key: the pure function every alias site is built on --
+
+    def test_derive_alias_key_namespaces_a_known_hostname(self):
+        self.assertEqual(monitor.derive_alias_key("container-1", "sid-abc"),
+                          "host:container-1")
+
+    def test_derive_alias_key_falls_back_when_hostname_unresolvable(self):
+        for bad_hostname in (None, "", 5):
+            self.assertEqual(
+                monitor.derive_alias_key(bad_hostname, "sid-abc"), "sid-abc")
+
+    # -- scan(): rows carry alias_key derived from container_info --
+
+    def test_scan_row_gets_container_alias_key(self):
+        _write_session(self.root, "-workspace-a", [
+            _assistant([_text_block()], session_id="s1"),
+        ])
+        [s] = scan(sessionid_to_label={"s1": "L"},
+                   container_info={"sessionid_to_hostname": {"s1": "c1"}})
+        self.assertEqual(s["key"], "s1")
+        self.assertEqual(s["alias_key"], "host:c1")
+
+    def test_scan_row_without_container_info_keeps_todays_behaviour(self):
+        _write_session(self.root, "-workspace-a", [
+            _assistant([_text_block()], session_id="s1"),
+        ])
+        [s] = scan(sessionid_to_label={"s1": "L"})
+        self.assertEqual(s["alias_key"], s["key"])
+
+    def test_sessionid_rotation_keeps_same_alias_key(self):
+        """THE REGRESSION: /clear rotates the sessionId (and therefore the
+        row key), but the container hostname doesn't change — the alias key
+        must stay identical, or a label set before /clear disappears after it."""
+        _write_session(self.root, "-workspace-a", [
+            _assistant([_text_block()], session_id="s1"),
+        ])
+        _write_session(self.root, "-workspace-b", [
+            _assistant([_text_block()], session_id="s2"),
+        ], filename="sess2.jsonl")
+        container_info = {"sessionid_to_hostname": {"s1": "c1", "s2": "c1"}}
+        sessions = scan(sessionid_to_label={"s1": "L", "s2": "L"},
+                         container_info=container_info)
+        self.assertEqual({s["key"] for s in sessions}, {"s1", "s2"})
+        self.assertEqual({s["alias_key"] for s in sessions}, {"host:c1"})
+
+    # -- scan_containers(): container_info's shape carries sessionid_to_hostname --
+
+    def test_scan_containers_docker_absent_container_info_has_all_three_maps(self):
+        orig_which = shutil.which
+        shutil.which = lambda name: None
+        try:
+            result = monitor.scan_containers()
+        finally:
+            shutil.which = orig_which
+        self.assertEqual(len(result), 4)
+        container_info = result[3]
+        self.assertIn("hostname_to_label", container_info)
+        self.assertIn("hostname_to_status", container_info)
+        self.assertIn("sessionid_to_hostname", container_info)
+        self.assertEqual(container_info["sessionid_to_hostname"], {})
+
+    # -- MonitorApp._alias_key: row-key -> alias-key lookup --
+
+    def test_alias_key_maps_known_row_key_and_falls_back_for_unknown(self):
+        fake = self._fake_app()
+        fake._alias_keys = {"s1": "host:c1"}
+        self.assertEqual(fake._alias_key("s1"), "host:c1")
+        self.assertEqual(fake._alias_key("unknown-key"), "unknown-key")
+
+    # -- MonitorApp._edit_alias: stores/reads under the resolved alias key --
+
+    def test_edit_alias_stores_under_alias_key_readable_via_different_row_key(self):
+        fake = self._fake_app()
+        fake._alias_keys = {"s1": "host:c1"}
+        fake._next_answer = "RAM"
+        monitor.MonitorApp._edit_alias(fake, "s1")
+        self.assertEqual(fake._session_aliases, {"host:c1": "RAM"})
+        # /clear: a new row key ("s2") maps to the SAME container alias key —
+        # the label set under "s1" must still be readable.
+        fake._alias_keys = {"s2": "host:c1"}
+        self.assertEqual(fake._session_aliases.get(fake._alias_key("s2")), "RAM")
+
+    def test_edit_alias_clear_pops_under_alias_key(self):
+        fake = self._fake_app()
+        fake._alias_keys = {"s1": "host:c1"}
+        fake._session_aliases["host:c1"] = "RAM"
+        fake._next_answer = ""
+        monitor.MonitorApp._edit_alias(fake, "s1")
+        self.assertNotIn("host:c1", fake._session_aliases)
+
+    # -- MonitorApp._prune_aliases: live/dead gate keyed by alias_key --
+
+    def test_prune_aliases_keeps_live_drops_dead_and_runs_once(self):
+        fake = self._fake_app()
+        fake._session_aliases.update({"host:c1": "RAM", "host:c2": "GONE"})
+        monitor.MonitorApp._prune_aliases(fake, [{"key": "s1", "alias_key": "host:c1"}])
+        self.assertEqual(fake._session_aliases, {"host:c1": "RAM"})
+        self.assertTrue(fake._aliases_pruned)
+        # Runs at most once: a later call, even with different live data,
+        # must not touch the dict again.
+        fake._session_aliases["host:c3"] = "NEW"
+        monitor.MonitorApp._prune_aliases(fake, [])
+        self.assertIn("host:c3", fake._session_aliases)
+
+    def test_prune_aliases_is_noop_on_empty_session_list(self):
+        fake = self._fake_app()
+        fake._session_aliases["host:c1"] = "RAM"
+        monitor.MonitorApp._prune_aliases(fake, [])
+        self.assertEqual(fake._session_aliases, {"host:c1": "RAM"})
+        self.assertFalse(fake._aliases_pruned)
+
+
 class Goal6c_NotificationToggles(unittest.TestCase):
     """Two independent notification switches persist through the config file:
     "local" (toast+audio+flash on this machine) and "telegram" (phone push).
