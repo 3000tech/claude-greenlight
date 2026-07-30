@@ -5,6 +5,8 @@
 
 Per-session attention monitor for [Claude Code](https://claude.com/claude-code) — built for **Windows hosts running sessions inside WSL2 / Docker containers**.
 
+![Claude Greenlight in action — parallel container sessions, live state and ready notification](docs/demo.gif)
+
 ![Standard mode — session list with live state and Docker containers](docs/standard-mode.png)
 
 ![Compact mode — one pill per session](docs/compact-mode.png)
