@@ -98,6 +98,7 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 - [minor/testing] Campagna ricertificazione hook per versione Claude Code (2026-07-29) — promuovere matrice+runbook fuori da .planning, fixture per versione, smoke ai major bump
+- [minor/general] Show paused-container sessions in overlay instead of dropping them (2026-07-30) — idea da UAT C4: il motore state-file le tiene già (D-06), è solo rendering al flip di Phase 3
 
 ### Blockers/Concerns
 
