@@ -10,7 +10,7 @@ files:
 
 ## Problem
 
-Osservato live durante la UAT Phase 2 (2026-07-30, screenshot docs/Screenshot 2026-07-30 123049.png): due container yunoai, uno killato dopo che la sua sessione (f903ed8f) era terminata pulitamente. La riga della sessione morta resta nel pannello (verde, action "file-history-snapshot") fino a MAX_AGE (1h).
+Osservato live durante la UAT Phase 2 (2026-07-30): due container yunoai, uno killato dopo che la sua sessione (f903ed8f) era terminata pulitamente. La riga della sessione morta resta nel pannello (verde, action "file-history-snapshot") fino a MAX_AGE (1h).
 
 Causa: l'ultima riga del jsonl è un record `file-history-snapshot` SENZA sessionId → la guardia anti-fantasma di `scan()` (che scarta jsonl con sessionId non corrispondente a container vivi) non si applica → scatta il fallback dir-based, e con un solo container superstite sulla stessa workdir il dir diventa non-ambiguo → il jsonl morto eredita l'etichetta del fratello vivo.
 
