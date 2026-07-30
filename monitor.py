@@ -109,7 +109,7 @@ LAUNCHER_SH = Path(os.environ.get("CLAUDE_LAUNCHER_SH", "")) if os.environ.get("
 CONFIG_FILE = Path.home() / ".claude-monitor-config.json"
 REFRESH_MS = 5000
 MAX_AGE_SEC = 3600
-NOTIFY_MIN_WORK_SEC = 5  # only beep+flash if Claude was working for at least this long
+NOTIFY_MIN_WORK_SEC = 60  # only beep+flash if Claude was working for at least this long
 # Window after a plain-user-prompt tail during which Claude is presumed to be
 # generating the first response. Short because if no assistant record appears
 # within this time the session is almost certainly abandoned.
