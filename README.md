@@ -70,7 +70,7 @@ Run it wherever Claude Code actually runs (inside the container image / entrypoi
 | `mode` | `standard` or `compact` overlay |
 | `local` | master switch for toast + sound + taskbar flash |
 | `telegram` | enable/disable Telegram push |
-| `aliases` | per-session display names (managed from the UI) |
+| `aliases` | per-container display names, keyed by container identity (managed from the UI) — survive `/clear`, `/resume` and CLI restarts |
 
 **Telegram** (optional): create a `.env` file next to `monitor.py`:
 

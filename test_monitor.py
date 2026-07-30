@@ -1440,6 +1440,93 @@ class Goal13_HooklessFallback(unittest.TestCase):
         self.assertNotIn("legacy_origin", by_key["a"])
 
 
+class Goal6e_AliasKeyParityAcrossEngines(unittest.TestCase):
+    """The legacy engine and the state-file engine must derive the SAME
+    alias identity for the same container, so a label set in default mode
+    (legacy-rendered) shows in --state-files diagnostic mode too."""
+
+    def setUp(self) -> None:
+        self._tmp_projects = TemporaryDirectory()
+        self._tmp_state = TemporaryDirectory()
+        self.projects_root = Path(self._tmp_projects.name)
+        self.state_root = Path(self._tmp_state.name)
+        self._orig_projects = monitor.PROJECTS_DIR
+        self._orig_state = monitor.STATE_DIR
+        monitor.PROJECTS_DIR = self.projects_root
+        monitor.STATE_DIR = self.state_root
+
+    def tearDown(self) -> None:
+        monitor.PROJECTS_DIR = self._orig_projects
+        monitor.STATE_DIR = self._orig_state
+        self._tmp_projects.cleanup()
+        self._tmp_state.cleanup()
+
+    def _write_state(self, session_id: str, **fields) -> Path:
+        record = {
+            "state": "waiting",
+            "ts": "2026-07-29T00:00:00Z",
+            "ts_ms": int(time.time() * 1000),
+            "cwd": "/workspace",
+            "hostname": "container-1",
+            "last_event": "Stop",
+            "background_tasks_count": 0,
+        }
+        record.update(fields)
+        f = self.state_root / f"{session_id}.json"
+        f.write_text(json.dumps(record), encoding="utf-8")
+        return f
+
+    def test_state_file_row_alias_key_from_hostname(self):
+        self._write_state("a", hostname="c1")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"}, legacy_sessions=[])
+        self.assertEqual(s["alias_key"], "host:c1")
+
+    def test_state_file_row_without_hostname_falls_back_to_session_id(self):
+        self._write_state("a", hostname=None)
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"}, legacy_sessions=[])
+        self.assertEqual(s["alias_key"], "a")
+
+    def test_parity_legacy_and_state_file_rows_share_alias_key(self):
+        _write_session(self.projects_root, "-workspace-a", [
+            _assistant([_text_block()], session_id="a"),
+        ])
+        self._write_state("a", hostname="c1")
+        container_info = {"sessionid_to_hostname": {"a": "c1"}}
+        legacy = scan(sessionid_to_label={"a": "L"}, container_info=container_info)
+        shadow = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, container_info=container_info,
+            legacy_sessions=legacy)
+        self.assertEqual(legacy[0]["alias_key"], shadow[0]["alias_key"])
+        self.assertEqual(legacy[0]["alias_key"], "host:c1")
+
+    def test_carried_through_legacy_row_keeps_its_alias_key(self):
+        _write_session(self.projects_root, "-workspace-b", [
+            _assistant([_text_block()], session_id="b"),
+        ])
+        container_info = {"sessionid_to_hostname": {"b": "c2"}}
+        legacy = scan(sessionid_to_label={"b": "L"}, container_info=container_info)
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"b": "L"}, container_info=container_info,
+            legacy_sessions=legacy)
+        [s] = sessions
+        self.assertTrue(s.get("legacy_origin"))
+        self.assertEqual(s["alias_key"], "host:c2")
+
+    def test_diagnostic_mode_internal_scan_forwards_container_info(self):
+        """scan_state_files() with legacy_sessions=None (the --state-files
+        diagnostic path) must forward container_info to its internal scan()
+        call, or carried-through rows would key their aliases differently
+        from the default-mode legacy list."""
+        _write_session(self.projects_root, "-workspace-b", [
+            _assistant([_text_block()], session_id="b"),
+        ])
+        container_info = {"sessionid_to_hostname": {"b": "c2"}}
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"b": "L"}, container_info=container_info)
+        [s] = sessions
+        self.assertEqual(s["alias_key"], "host:c2")
+
+
 # ---------------------------------------------------------------------------
 # GOAL 14-16 — Divergence records must be decisive, episodic, and bounded
 # ---------------------------------------------------------------------------
