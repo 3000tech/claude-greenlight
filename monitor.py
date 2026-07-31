@@ -921,7 +921,8 @@ def state_files_mode(argv: list[str] | None = None) -> bool:
 
 def scan(label_map: dict[str, str] | None = None,
          sessionid_to_label: dict[str, str] | None = None,
-         container_info: dict | None = None) -> list[dict]:
+         container_info: dict | None = None,
+         hostname_to_name: dict[str, str] | None = None) -> list[dict]:
     if not PROJECTS_DIR.is_dir():
         return []
     now = time.time()
@@ -1052,6 +1053,7 @@ def scan(label_map: dict[str, str] | None = None,
         sessions.append({
             "key": key,
             "name": name,
+            "display_name": session_display_name(name, hostname, hostname_to_name),
             "session_id": session_id,
             "alias_key": derive_alias_key(hostname, key),
             "encoded_dir": proj_dir.name,
@@ -1111,26 +1113,67 @@ def container_display_name(c: dict) -> str:
     return project
 
 
-def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]:
+def session_display_name(label: str, hostname: str | None,
+                          hostname_to_name: dict[str, str] | None) -> str:
+    """Resolve the text a SESSION row/chip should draw.
+
+    Lives at module level (display-only, tkinter-free) for the same reason
+    `container_display_name` does, and delegates to it deliberately: the
+    prefix rule that disambiguates a duplicate-container project must exist
+    in exactly one place, or a docker row and a session row for the same
+    container could one day drift apart and point the user at the wrong
+    chip. `label` (the project label, i.e. today's `s["name"]`) is returned
+    unchanged whenever the container can't be resolved — no hostname, no
+    map, or an unknown hostname — which is what keeps every session in a
+    randomly-named or unresolvable container rendering exactly as it does
+    today.
+    """
+    if not isinstance(hostname, str) or not hostname:
+        return label
+    if not hostname_to_name:
+        return label
+    name = hostname_to_name.get(hostname)
+    if not name:
+        return label
+    return container_display_name({"name": name, "project": label})
+
+
+def session_display_text(s: dict) -> str:
+    """Read side for the three places that draw a session's name.
+
+    Prefers `display_name` (set by `scan()` via `session_display_name`) and
+    falls back to `name` — and then to "" — so rows produced by the frozen
+    state-file engine (`scan_state_files`, which carries no `display_name`
+    field) render exactly as they do today, with no edit to that frozen
+    function.
+    """
+    return s.get("display_name") or s.get("name") or ""
+
+
+def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict, dict[str, str]]:
     """List running Docker containers that carry a 'project' label.
 
-    Returns (rows, label_map, sessionid_to_label, container_info):
-    `label_map` maps encoded session-dir names (as they appear under
-    ~/.claude/projects/) to the container's launcher label; `container_info`
-    is the Phase 2 state-file engine's container-identity/liveness
-    cross-check (D-05, ENG-03) — {"hostname_to_label": ..., "hostname_to_status": ...,
-    "sessionid_to_hostname": ...}, keyed by the container hostname the state
-    writer captures at write time, built from the one container-inspection
-    call below (no second subprocess call added). `sessionid_to_hostname`
-    also feeds derive_alias_key() so a session's alias survives a sessionId
-    rotation.
+    Returns (rows, label_map, sessionid_to_label, container_info,
+    hostname_to_name): `label_map` maps encoded session-dir names (as they
+    appear under ~/.claude/projects/) to the container's launcher label;
+    `container_info` is the Phase 2 state-file engine's container-identity/
+    liveness cross-check (D-05, ENG-03) — {"hostname_to_label": ...,
+    "hostname_to_status": ..., "sessionid_to_hostname": ...}, keyed by the
+    container hostname the state writer captures at write time, built from
+    the one container-inspection call below (no second subprocess call
+    added). `sessionid_to_hostname` also feeds derive_alias_key() so a
+    session's alias survives a sessionId rotation. `hostname_to_name` maps
+    that same hostname to the container's DOCKER NAME (not its label) for
+    session_display_name() to disambiguate duplicate-project sessions; it is
+    kept OUT of container_info because the state-file engine's cross-check
+    reads that dict and its values must stay pure project labels.
     """
     empty_container_info = {
         "hostname_to_label": {}, "hostname_to_status": {}, "sessionid_to_hostname": {},
     }
     docker = shutil.which("docker")
     if not docker:
-        return [], {}, {}, dict(empty_container_info)
+        return [], {}, {}, dict(empty_container_info), {}
     kwargs: dict = {}
     if os.name == "nt":
         # Suppress console window flash on Windows (pythonw still shows one otherwise)
@@ -1142,18 +1185,20 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
             capture_output=True, text=True, timeout=2, check=False, **kwargs,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return [], {}, {}, dict(empty_container_info)
+        return [], {}, {}, dict(empty_container_info), {}
     if out.returncode != 0:
-        return [], {}, {}, dict(empty_container_info)
+        return [], {}, {}, dict(empty_container_info), {}
     rows = []
     ids = []
     cid_to_label: dict[str, str] = {}
+    cid_to_name: dict[str, str] = {}
     for line in out.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) < 4 or not parts[1]:
             continue
         ids.append(parts[0])
         cid_to_label[parts[0]] = parts[1]
+        cid_to_name[parts[0]] = parts[2]
         rows.append({"project": parts[1], "name": parts[2], "status": parts[3]})
     order = launcher_order()
     big = len(order) + 1
@@ -1169,6 +1214,7 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
     container_labels: dict[str, str] = {}
     hostname_to_label: dict[str, str] = {}
     hostname_to_status: dict[str, str] = {}
+    hostname_to_name: dict[str, str] = {}
     cid_to_hostname: dict[str, str] = {}
     if ids:
         try:
@@ -1203,6 +1249,7 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
                 if len(parts) >= 4 and parts[3]:
                     hostname_to_label[parts[3]] = cid_to_label.get(cid, "")
                     hostname_to_status[parts[3]] = parts[2] if len(parts) >= 3 else ""
+                    hostname_to_name[parts[3]] = cid_to_name.get(cid, "")
                     cid_to_hostname[cid] = parts[3]
             for encoded, labels in pending.items():
                 # Only safe to map encoded_dir → label without docker exec when
@@ -1228,7 +1275,7 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]
         "hostname_to_label": hostname_to_label,
         "hostname_to_status": hostname_to_status,
         "sessionid_to_hostname": sessionid_to_hostname,
-    }
+    }, hostname_to_name
 
 
 def query_container_sessionids(
@@ -1393,6 +1440,11 @@ class MonitorApp:
         self._cached_container_info: dict = {
             "hostname_to_label": {}, "hostname_to_status": {}, "sessionid_to_hostname": {},
         }
+        # Display-only: hostname -> container NAME (not label), from
+        # scan_containers()'s fifth return element, feeding
+        # session_display_name() so a session row/chip can disambiguate a
+        # duplicate-project container the same way the docker row does.
+        self._cached_hostname_to_name: dict[str, str] = {}
         self._docker_query_inflight = False
         # Phase 2 shadow engine (D-01/ENG-01): read once at startup from the
         # `--state-files` CLI flag via state_files_mode() below. False keeps
@@ -2011,7 +2063,7 @@ class MonitorApp:
 
         def worker() -> None:
             try:
-                rows, label_map, sid_map, container_info = scan_containers()
+                rows, label_map, sid_map, container_info, hostname_to_name = scan_containers()
             except Exception:
                 # Transient docker hiccup — keep prior cache, skip this tick.
                 self._first_docker_done = True
@@ -2025,6 +2077,7 @@ class MonitorApp:
             # ghost rows (still within MAX_AGE_SEC mtime).
             self._sessionid_to_label = sid_map
             self._cached_container_info = container_info
+            self._cached_hostname_to_name = hostname_to_name
             self._first_docker_done = True
             self._docker_query_inflight = False
 
@@ -2049,7 +2102,8 @@ class MonitorApp:
         containers = self._cached_containers
         try:
             sessions = scan(self._cached_label_map, self._sessionid_to_label,
-                             container_info=self._cached_container_info)
+                             container_info=self._cached_container_info,
+                             hostname_to_name=self._cached_hostname_to_name)
         except Exception:
             sessions = []
 
@@ -2153,8 +2207,9 @@ class MonitorApp:
                 row["dot"].config(text=s["dot"])
             if row["dot"].cget("fg") != s["dot_color"]:
                 row["dot"].config(fg=s["dot_color"])
-            if row["name"].cget("text") != s["name"]:
-                row["name"].config(text=s["name"])
+            display_txt = session_display_text(s)
+            if row["name"].cget("text") != display_txt:
+                row["name"].config(text=display_txt)
             alias_txt = self._session_aliases.get(self._alias_key(key), "")
             if row["alias"].cget("text") != alias_txt:
                 row["alias"].config(text=alias_txt)

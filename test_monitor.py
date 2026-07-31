@@ -1109,7 +1109,7 @@ class Goal6d_AliasKeyedByContainer(MonitorTestBase):
             result = monitor.scan_containers()
         finally:
             shutil.which = orig_which
-        self.assertEqual(len(result), 4)
+        self.assertEqual(len(result), 5)
         container_info = result[3]
         self.assertIn("hostname_to_label", container_info)
         self.assertIn("hostname_to_status", container_info)
@@ -1570,14 +1570,14 @@ class Goal12_ContainerInfoShape(unittest.TestCase):
     both hostname maps even when the docker binary is absent, so the shape
     is provable without a docker install in this sandbox."""
 
-    def test_scan_containers_returns_four_elements_with_container_info_maps(self):
+    def test_scan_containers_returns_five_elements_with_container_info_maps(self):
         orig_which = shutil.which
         shutil.which = lambda name: None
         try:
             result = monitor.scan_containers()
         finally:
             shutil.which = orig_which
-        self.assertEqual(len(result), 4)
+        self.assertEqual(len(result), 5)
         container_info = result[3]
         self.assertIn("hostname_to_label", container_info)
         self.assertIn("hostname_to_status", container_info)
@@ -2024,6 +2024,72 @@ class Goal18_ContainerDisplayName(unittest.TestCase):
         display_b = monitor.container_display_name(row_b)
         self.assertNotEqual(display_a, display_b)
         self.assertEqual(row_a["project"], row_b["project"])
+
+
+# ---------------------------------------------------------------------------
+# GOAL 19 — Session rows and compact chips disambiguate a duplicate-project
+# container the same way the docker row does (display-only)
+# ---------------------------------------------------------------------------
+
+class Goal19_SessionDisplayName(MonitorTestBase):
+    """Two containers of the same project used to draw two identical session
+    rows/chips reading the project label. session_display_name() reuses
+    container_display_name()'s prefix rule so the second container's session
+    renders `dev-tools-2` while `s["name"]` (identity: sort key, divergence
+    log, alias) stays the pure project label `dev-tools`."""
+
+    def test_duplicate_container_session_resolves_end_to_end(self):
+        """Threads scan_containers()'s real output into scan(), proving the
+        wiring (not just the rule): a docker ps/inspect pair for two
+        `dev-tools` containers, a mocked sessionId lookup pinning s1 to the
+        SECOND container's hostname, and a scan() row for that sessionId
+        ending up with name=='dev-tools' but display_name=='dev-tools-2'.
+
+        label_map is legitimately empty here — two containers sharing the
+        same encoded dir is exactly the ambiguity this task resolves via
+        sessionId, not via label_map.
+        """
+        self.assertEqual(
+            monitor.session_display_name("dev-tools", "host2", {"host2": "dev-tools-2"}),
+            "dev-tools-2")
+
+        ps_stdout = (
+            "cid1\tdev-tools\tdev-tools\tUp 2 minutes\n"
+            "cid2\tdev-tools\tdev-tools-2\tUp 1 minute\n"
+        )
+        inspect_stdout = (
+            "dev-tools\t/workspace\trunning\thost1\n"
+            "dev-tools\t/workspace\trunning\thost2\n"
+        )
+        orig_which = monitor.shutil.which
+        monitor.shutil.which = lambda name: "/usr/bin/docker"
+        run_results = [
+            mock.Mock(returncode=0, stdout=ps_stdout),
+            mock.Mock(returncode=0, stdout=inspect_stdout),
+        ]
+        try:
+            with mock.patch.object(monitor.subprocess, "run", side_effect=run_results), \
+                 mock.patch.object(monitor, "query_container_sessionids",
+                                    return_value=({"s1": "dev-tools"}, {"s1": "host2"})):
+                (rows, label_map, sid_map, container_info,
+                 hostname_to_name) = monitor.scan_containers()
+        finally:
+            monitor.shutil.which = orig_which
+
+        self.assertEqual(hostname_to_name, {"host1": "dev-tools", "host2": "dev-tools-2"})
+        self.assertEqual(set(container_info.keys()),
+                          {"hostname_to_label", "hostname_to_status", "sessionid_to_hostname"})
+        self.assertEqual(set(container_info["hostname_to_label"].values()), {"dev-tools"})
+
+        _write_session(self.root, "-workspace", [
+            _assistant([_text_block()], session_id="s1"),
+        ])
+        [s] = scan(sessionid_to_label={"s1": "dev-tools"},
+                   container_info={"sessionid_to_hostname": {"s1": "host2"}},
+                   hostname_to_name=hostname_to_name)
+        self.assertEqual(s["name"], "dev-tools")
+        self.assertEqual(s["display_name"], "dev-tools-2")
+        self.assertEqual(monitor.session_display_text(s), "dev-tools-2")
 
 
 if __name__ == "__main__":
