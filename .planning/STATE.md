@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: state-writer-shadow-mode
 status: executing
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-07-29T15:59:40.143Z"
-last_activity: 2026-07-29
-last_activity_desc: Phase 02 execution started
+stopped_at: "Completed quick task 260731-an2: bg-shell time-cap on grey pin"
+last_updated: "2026-07-31T07:49:58.641Z"
+last_activity: 2026-07-30
+last_activity_desc: "Completed quick task 260730-kgw: container-keyed session aliases"
 progress:
   total_phases: 2
   completed_phases: 1
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
 Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-07-30 — Completed quick task 260730-kgw: container-keyed session aliases
+Last activity: 2026-07-31 — Completed quick task 260731-an2: time-capped bg-shell WORKING pin (dev-server grey-forever fix)
 
 Progress: [█████████░] 86%
 
@@ -94,6 +94,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-04]: legacy_evidence is one compact string, not structured sub-fields, so the T-02-17 content-leak audit is a single substring grep
 - [Phase ?]: [Phase 02-04]: a verdict-pair change mid-episode opens a fresh divergence episode (ticks resets to 1) rather than continuing the prior one's count
 - [Phase ?]: [Phase 02-04]: filter_divergence_events() is a pure records-in/state-in -> events/next-state-out function, no MonitorApp mutation, so episode collapse is unit-testable without tkinter
+- [Phase ?]: [quick-260731-an2]: BG_PIN_MAX_SEC=900s time-caps the legacy bg-shell WORKING pin (status decision only, badge stays uncapped); TEST-MATRIX section 4 records the same cap requirement for the Phase 3 hook-native rule
 
 ### Pending Todos
 
@@ -115,6 +116,7 @@ Recent decisions affecting current work:
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260730-kgw | Fix session aliases lost on /clear: key aliases by container identity instead of sessionId | 2026-07-30 | e558946 | [260730-kgw-fix-session-aliases-lost-on-clear-key-al](./quick/260730-kgw-fix-session-aliases-lost-on-clear-key-al/) |
+| 260731-an2 | Time-cap the background-shell WORKING pin so an eternal bg process (dev server) stops pinning the overlay grey forever | 2026-07-31 | 2c6f4d3 | [260731-an2-bg-shell-time-cap-grey-pin-from-backgrou](./quick/260731-an2-bg-shell-time-cap-grey-pin-from-backgrou/) |
 
 ## Deferred Items
 
@@ -126,6 +128,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-29T15:59:40.104Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-07-31T07:49:42.458Z
+Stopped at: Completed quick task 260731-an2: bg-shell time-cap on grey pin
 Resume file: None
