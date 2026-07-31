@@ -357,31 +357,38 @@ class Goal2_ClaudeActivelyWorking(MonitorTestBase):
 
 
 # ---------------------------------------------------------------------------
-# GOAL 2h — A live background shell only pins WORKING while the jsonl is
-# fresh; past BG_PIN_MAX_SEC an eternal process (dev server, watcher) stops
-# holding the session grey forever, while the bg badge keeps reporting it.
+# GOAL 2h — A live background shell is badge-only: it never pins WORKING by
+# itself, at any age. Grey during a re-invoked turn comes from case-13
+# (UserPromptSubmit → working-lock), not from the shell itself. Monitor/
+# agent/async-agent pins are unaffected.
 # ---------------------------------------------------------------------------
 
-class Goal2h_BgShellPinTimeCap(MonitorTestBase):
-    """A never-ending background shell (dev server via run_in_background)
-    must not pin a session grey forever — but a finite bg task (build, test,
-    install) must still keep today's grey-while-running semantics."""
+class Goal2h_BgShellBadgeOnly(MonitorTestBase):
+    """A background shell (dev server, build, anything started with
+    run_in_background) must never pin a session grey by itself — once the
+    turn has ended, the session goes WAITING immediately regardless of the
+    shell's age, while the bg badge keeps reporting the running process."""
 
-    def test_fresh_bg_shell_pins_working_and_badge_true(self):
-        """G2h-1: fresh jsonl, live bg shell, ended turn → WORKING, bg badge True."""
-        fresh = time.time() - 5  # well inside BG_PIN_MAX_SEC
+    def test_fresh_bg_shell_ended_turn_is_waiting_badge_true(self):
+        """G2h-1: fresh jsonl, live bg shell, ended turn → WAITING (not held
+        grey by the shell), bg badge still True. The fixture's only tail
+        signal is a plain assistant text block — no tool_result/thinking/
+        tool_use — so nothing OTHER than the (now-removed) bg pin could have
+        held this grey."""
+        fresh = time.time() - 5
         _write_session(self.root, "-workspace-app", [
             *_bg_shell_start("shell_1", "tu_bg_start"),
             _assistant([_text_block("dev server started")]),
         ], mtime=fresh)
         [s] = self._scan({"-workspace-app": "app"})
-        self.assertEqual(s["status"], "WORKING")
+        self.assertEqual(s["status"], "WAITING")
         self.assertTrue(s["bg"])
 
-    def test_stale_bg_shell_releases_to_waiting_but_badge_stays_true(self):
-        """G2h-2: jsonl silent past BG_PIN_MAX_SEC, bg shell still live (eternal
-        dev server) → WAITING, but the bg badge still shows the running process."""
-        stale = time.time() - (monitor.BG_PIN_MAX_SEC + 60)
+    def test_stale_bg_shell_ended_turn_is_waiting_badge_true(self):
+        """G2h-2: same as G2h-1 but with an old mtime — the shell being
+        long-lived changes nothing, since it was never a pin in the first
+        place. Confirms there's no lingering age dependency."""
+        stale = time.time() - 1800  # 30 min, well inside MAX_AGE_SEC
         _write_session(self.root, "-workspace-app", [
             *_bg_shell_start("shell_1", "tu_bg_start"),
             _assistant([_text_block("dev server started")]),
@@ -390,22 +397,11 @@ class Goal2h_BgShellPinTimeCap(MonitorTestBase):
         self.assertEqual(s["status"], "WAITING")
         self.assertTrue(s["bg"])
 
-    def test_stale_bg_shell_within_cap_still_working(self):
-        """G2h-3: a finite bg task (build/test/install) inside the cap keeps
-        the pre-existing grey-while-running semantics (TEST-MATRIX case 13)."""
-        mid = time.time() - (monitor.BG_PIN_MAX_SEC - 60)  # inside the cap
-        _write_session(self.root, "-workspace-app", [
-            *_bg_shell_start("shell_1", "tu_bg_start"),
-            _assistant([_text_block("build running")]),
-        ], mtime=mid)
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertEqual(s["status"], "WORKING")
-
-    def test_stale_async_agent_still_working_bg_cap_is_scoped(self):
-        """G2h-4: the cap is scoped to bg shells only — an async agent still
-        in flight past BG_PIN_MAX_SEC stays WORKING (Monitor-tool/agent pins
-        are unchanged)."""
-        stale = time.time() - (monitor.BG_PIN_MAX_SEC + 60)
+    def test_async_agent_in_flight_still_working_bg_pin_removal_scoped(self):
+        """G2h-3: removing the bg-shell pin must not touch the async-agent
+        pin — an async agent still in flight (no completion notification)
+        keeps the session WORKING, at any age."""
+        stale = time.time() - 1800
         _write_session(self.root, "-workspace-app", [
             *_async_agent_launch("tu_dispatch", "a63460d33faaf2a4a"),
             _assistant([_text_block("Wave 2 dispatched. Waiting for completion.")]),
