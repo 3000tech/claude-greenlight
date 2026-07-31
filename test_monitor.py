@@ -2038,21 +2038,14 @@ class Goal19_SessionDisplayName(MonitorTestBase):
     renders `dev-tools-2` while `s["name"]` (identity: sort key, divergence
     log, alias) stays the pure project label `dev-tools`."""
 
-    def test_duplicate_container_session_resolves_end_to_end(self):
-        """Threads scan_containers()'s real output into scan(), proving the
-        wiring (not just the rule): a docker ps/inspect pair for two
-        `dev-tools` containers, a mocked sessionId lookup pinning s1 to the
-        SECOND container's hostname, and a scan() row for that sessionId
-        ending up with name=='dev-tools' but display_name=='dev-tools-2'.
-
-        label_map is legitimately empty here — two containers sharing the
-        same encoded dir is exactly the ambiguity this task resolves via
-        sessionId, not via label_map.
-        """
-        self.assertEqual(
-            monitor.session_display_name("dev-tools", "host2", {"host2": "dev-tools-2"}),
-            "dev-tools-2")
-
+    @staticmethod
+    def _scan_containers_two_dev_tools():
+        """Mock docker ps/inspect for two `dev-tools` containers and call the
+        real scan_containers(), so tests exercise the actual wiring instead
+        of restating the parsing logic. sessionId s1 is pinned (via a
+        mocked query_container_sessionids) to the SECOND container's
+        hostname (host2), which is exactly the duplicate-project ambiguity
+        this task resolves."""
         ps_stdout = (
             "cid1\tdev-tools\tdev-tools\tUp 2 minutes\n"
             "cid2\tdev-tools\tdev-tools-2\tUp 1 minute\n"
@@ -2071,10 +2064,27 @@ class Goal19_SessionDisplayName(MonitorTestBase):
             with mock.patch.object(monitor.subprocess, "run", side_effect=run_results), \
                  mock.patch.object(monitor, "query_container_sessionids",
                                     return_value=({"s1": "dev-tools"}, {"s1": "host2"})):
-                (rows, label_map, sid_map, container_info,
-                 hostname_to_name) = monitor.scan_containers()
+                return monitor.scan_containers()
         finally:
             monitor.shutil.which = orig_which
+
+    def test_duplicate_container_session_resolves_end_to_end(self):
+        """Threads scan_containers()'s real output into scan(), proving the
+        wiring (not just the rule): a docker ps/inspect pair for two
+        `dev-tools` containers, a mocked sessionId lookup pinning s1 to the
+        SECOND container's hostname, and a scan() row for that sessionId
+        ending up with name=='dev-tools' but display_name=='dev-tools-2'.
+
+        label_map is legitimately empty here — two containers sharing the
+        same encoded dir is exactly the ambiguity this task resolves via
+        sessionId, not via label_map.
+        """
+        self.assertEqual(
+            monitor.session_display_name("dev-tools", "host2", {"host2": "dev-tools-2"}),
+            "dev-tools-2")
+
+        (rows, label_map, sid_map, container_info,
+         hostname_to_name) = self._scan_containers_two_dev_tools()
 
         self.assertEqual(hostname_to_name, {"host1": "dev-tools", "host2": "dev-tools-2"})
         self.assertEqual(set(container_info.keys()),
@@ -2090,6 +2100,99 @@ class Goal19_SessionDisplayName(MonitorTestBase):
         self.assertEqual(s["name"], "dev-tools")
         self.assertEqual(s["display_name"], "dev-tools-2")
         self.assertEqual(monitor.session_display_text(s), "dev-tools-2")
+
+    # -- session_display_name(): the pure rule and every fallback branch --
+
+    def test_first_container_of_the_pair_shows_todays_text(self):
+        self.assertEqual(
+            monitor.session_display_name("dev-tools", "host1", {"host1": "dev-tools"}),
+            "dev-tools")
+
+    def test_random_docker_name_falls_back_to_label(self):
+        self.assertEqual(
+            monitor.session_display_name("dev-tools", "host3", {"host3": "dreamy_bose"}),
+            "dev-tools")
+
+    def test_hostname_absent_from_map_falls_back_to_label(self):
+        self.assertEqual(
+            monitor.session_display_name("dev-tools", "host9", {"host1": "dev-tools-2"}),
+            "dev-tools")
+
+    def test_empty_map_falls_back_to_label(self):
+        self.assertEqual(monitor.session_display_name("dev-tools", "host1", {}), "dev-tools")
+
+    def test_none_map_falls_back_to_label(self):
+        self.assertEqual(monitor.session_display_name("dev-tools", "host1", None), "dev-tools")
+
+    def test_none_or_empty_hostname_falls_back_to_label(self):
+        mapping = {"host1": "dev-tools-2"}
+        self.assertEqual(monitor.session_display_name("dev-tools", None, mapping), "dev-tools")
+        self.assertEqual(monitor.session_display_name("dev-tools", "", mapping), "dev-tools")
+
+    # -- session_display_text(): the read side and its fallback --
+
+    def test_display_text_falls_back_to_name_for_shadow_engine_rows(self):
+        """A row from the frozen state-file engine carries no display_name
+        key at all — the fallback is what lets it render unchanged."""
+        self.assertEqual(monitor.session_display_text({"name": "dev-tools"}), "dev-tools")
+
+    def test_display_text_prefers_display_name_when_present(self):
+        row = {"name": "dev-tools", "display_name": "dev-tools-2"}
+        self.assertEqual(monitor.session_display_text(row), "dev-tools-2")
+
+    # -- scan() rows: name/display_name fallback when the container can't
+    # -- be resolved at all --
+
+    def test_scan_row_without_container_info_has_display_name_equal_to_name(self):
+        _write_session(self.root, "-workspace", [
+            _assistant([_text_block()], session_id="s1"),
+        ])
+        [s] = scan(sessionid_to_label={"s1": "dev-tools"})
+        self.assertEqual(s["display_name"], s["name"])
+
+    def test_scan_row_with_unmapped_hostname_has_display_name_equal_to_name(self):
+        _write_session(self.root, "-workspace", [
+            _assistant([_text_block()], session_id="s1"),
+        ])
+        [s] = scan(sessionid_to_label={"s1": "dev-tools"},
+                   container_info={"sessionid_to_hostname": {"s1": "hostX"}},
+                   hostname_to_name={})
+        self.assertEqual(s["display_name"], s["name"])
+
+    # -- sort guard: a suffixed display text must not move the session in
+    # -- the sort order, which is keyed on s["name"] --
+
+    def test_sort_order_unaffected_by_display_name(self):
+        _write_session(self.root, "-workspace-a", [
+            _assistant([_text_block()], session_id="s1"),
+        ], filename="a.jsonl")
+        _write_session(self.root, "-workspace-z", [
+            _assistant([_text_block()], session_id="s2"),
+        ], filename="z.jsonl")
+        with mock.patch.object(monitor, "launcher_order",
+                                return_value={"dev-tools": 0, "zeta": 1}):
+            sessions = scan(
+                sessionid_to_label={"s1": "dev-tools", "s2": "zeta"},
+                container_info={"sessionid_to_hostname": {"s1": "host2"}},
+                hostname_to_name={"host2": "dev-tools-2"})
+        self.assertEqual([s["name"] for s in sessions], ["dev-tools", "zeta"])
+        self.assertEqual(monitor.session_display_text(sessions[0]), "dev-tools-2")
+
+    # -- container_info guard: the frozen engine's cross-check dict keeps
+    # -- exactly its three keys, with values that stay pure project labels --
+
+    def test_container_info_keeps_pure_project_labels(self):
+        (rows, label_map, sid_map, container_info,
+         hostname_to_name) = self._scan_containers_two_dev_tools()
+        self.assertEqual(set(container_info.keys()),
+                          {"hostname_to_label", "hostname_to_status", "sessionid_to_hostname"})
+        for label in container_info["hostname_to_label"].values():
+            self.assertEqual(label, "dev-tools")
+            self.assertNotIn(label, ("dev-tools-2",))
+        # hostname_to_name (the new, separate map) is where the container
+        # NAME lives — proving the two maps didn't get merged/confused.
+        self.assertIn("dev-tools-2", hostname_to_name.values())
+        self.assertNotIn("dev-tools-2", container_info["hostname_to_label"].values())
 
 
 if __name__ == "__main__":

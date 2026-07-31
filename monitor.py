@@ -1816,7 +1816,7 @@ class MonitorApp:
                         # Debounce: arm now, fire only if still WAITING next tick.
                         self._pending_notify[key] = int(now - started)
                 elif key in self._pending_notify:
-                    self._notify(s["name"], self._pending_notify.pop(key), key=key)
+                    self._notify(session_display_text(s), self._pending_notify.pop(key), key=key)
             self._prev_status[key] = curr
         # Drop tracking for sessions no longer present
         for key in list(self._prev_status):
@@ -2258,8 +2258,9 @@ class MonitorApp:
                 self._bind_alias_click(chip, key)
             if chip["dot"].cget("fg") != s["dot_color"]:
                 chip["dot"].config(fg=s["dot_color"])
-            if chip["name"].cget("text") != s["name"]:
-                chip["name"].config(text=s["name"])
+            display_txt = session_display_text(s)
+            if chip["name"].cget("text") != display_txt:
+                chip["name"].config(text=display_txt)
             alias_txt = self._session_aliases.get(self._alias_key(key), "")
             if chip["alias"].cget("text") != alias_txt:
                 chip["alias"].config(text=alias_txt)
