@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
 Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-07-31 — Completed quick task 260731-an2: time-capped bg-shell WORKING pin (dev-server grey-forever fix)
+Last activity: 2026-07-31 — Completed quick task 260731-an2 rev.2: bg shells badge-only, never pin WORKING (dev-server grey-forever fix)
 
 Progress: [█████████░] 86%
 
@@ -116,7 +116,7 @@ Recent decisions affecting current work:
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260730-kgw | Fix session aliases lost on /clear: key aliases by container identity instead of sessionId | 2026-07-30 | e558946 | [260730-kgw-fix-session-aliases-lost-on-clear-key-al](./quick/260730-kgw-fix-session-aliases-lost-on-clear-key-al/) |
-| 260731-an2 | Time-cap the background-shell WORKING pin so an eternal bg process (dev server) stops pinning the overlay grey forever | 2026-07-31 | 2c6f4d3 | [260731-an2-bg-shell-time-cap-grey-pin-from-backgrou](./quick/260731-an2-bg-shell-time-cap-grey-pin-from-backgrou/) |
+| 260731-an2 | Bg shells are badge-only: never pin WORKING (rev.2 dropped the initial 15-min cap) — dev server no longer holds the overlay grey | 2026-07-31 | 9f18b8f | [260731-an2-bg-shell-time-cap-grey-pin-from-backgrou](./quick/260731-an2-bg-shell-time-cap-grey-pin-from-backgrou/) |
 
 ## Deferred Items
 
