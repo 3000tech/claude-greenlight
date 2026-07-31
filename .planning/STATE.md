@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: state-writer-shadow-mode
 status: executing
-stopped_at: "Completed quick task 260731-c52: docker rows show container name on duplicate projects"
+stopped_at: "Completed quick task 260731-cgg: session chips/rows show disambiguated container name"
 last_updated: "2026-07-31T08:52:15.706Z"
 last_activity: 2026-07-31
-last_activity_desc: "Completed quick task 260731-bu8: Ctrl+B manually-backgrounded shells now light the ⚙ badge"
+last_activity_desc: "Completed quick task 260731-cgg: session chips/rows show disambiguated container name"
 progress:
   total_phases: 2
   completed_phases: 1
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
 Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-07-31 — Completed quick task 260731-c52: docker rows show container name on duplicate projects
+Last activity: 2026-07-31 — Completed quick task 260731-cgg: session chips/rows show disambiguated container name
 
 Progress: [█████████░] 86%
 
@@ -120,6 +120,7 @@ Recent decisions affecting current work:
 | 260731-an2 | Bg shells are badge-only: never pin WORKING (rev.2 dropped the initial 15-min cap) — dev server no longer holds the overlay grey | 2026-07-31 | 9f18b8f | [260731-an2-bg-shell-time-cap-grey-pin-from-backgrou](./quick/260731-an2-bg-shell-time-cap-grey-pin-from-backgrou/) |
 | 260731-bu8 | Recognize manually-backgrounded (Ctrl+B) shells in shell_tracker so the ⚙ badge lights up for them | 2026-07-31 | bbb2444 | [260731-bu8-recognize-manually-backgrounded-ctrl-b-s](./quick/260731-bu8-recognize-manually-backgrounded-ctrl-b-s/) |
 | 260731-c52 | Docker rows show the container name when it disambiguates a duplicate project (dev-tools / dev-tools-2), else fall back to the project label | 2026-07-31 | ebb25b0 | [260731-c52-container-rows-show-docker-name-when-it-](./quick/260731-c52-container-rows-show-docker-name-when-it-/) |
+| 260731-cgg | Session rows, compact chips and notifications show the disambiguated container name for duplicate-project sessions (display-only; sort/alias/divergence identity untouched) | 2026-07-31 | 1e07ee1 | [260731-cgg-session-rows-and-compact-chips-show-disa](./quick/260731-cgg-session-rows-and-compact-chips-show-disa/) |
 
 ## Deferred Items
 
