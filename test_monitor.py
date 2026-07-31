@@ -2001,6 +2001,30 @@ class Goal18_ContainerDisplayName(unittest.TestCase):
         row = {"project": "dev-tools", "name": "dreamy_bose", "status": "Up"}
         self.assertEqual(monitor.container_display_name(row), "dev-tools")
 
+    def test_empty_or_missing_name_falls_back_to_project_label(self):
+        row_empty = {"project": "dev-tools", "name": "", "status": "Up"}
+        row_missing = {"project": "dev-tools", "status": "Up"}
+        self.assertEqual(monitor.container_display_name(row_empty), "dev-tools")
+        self.assertEqual(monitor.container_display_name(row_missing), "dev-tools")
+
+    def test_shared_head_shorter_than_project_label_is_not_a_prefix_match(self):
+        row = {"project": "dev-tools", "name": "dev", "status": "Up"}
+        self.assertEqual(monitor.container_display_name(row), "dev-tools")
+
+    def test_helper_does_not_mutate_the_row_dict(self):
+        row = {"project": "dev-tools", "name": "dev-tools-2", "status": "Up"}
+        before = dict(row)
+        monitor.container_display_name(row)
+        self.assertEqual(row, before)
+
+    def test_same_project_pair_produces_distinct_text_and_shared_identity(self):
+        row_a = {"project": "dev-tools", "name": "dev-tools", "status": "Up"}
+        row_b = {"project": "dev-tools", "name": "dev-tools-2", "status": "Up"}
+        display_a = monitor.container_display_name(row_a)
+        display_b = monitor.container_display_name(row_b)
+        self.assertNotEqual(display_a, display_b)
+        self.assertEqual(row_a["project"], row_b["project"])
+
 
 if __name__ == "__main__":
     unittest.main()
