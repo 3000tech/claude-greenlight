@@ -1982,5 +1982,25 @@ class Goal17_StateFilesMode(unittest.TestCase):
         self.assertIs(monitor.select_render_sessions(legacy, shadow, True), shadow)
 
 
+# ---------------------------------------------------------------------------
+# GOAL 18 — Docker rows show the container name when it disambiguates a
+# duplicate project, else fall back to the project label (display-only)
+# ---------------------------------------------------------------------------
+
+class Goal18_ContainerDisplayName(unittest.TestCase):
+
+    def test_suffixed_duplicate_name_is_displayed(self):
+        row = {"project": "dev-tools", "name": "dev-tools-2", "status": "Up"}
+        self.assertEqual(monitor.container_display_name(row), "dev-tools-2")
+
+    def test_exact_match_name_looks_like_today(self):
+        row = {"project": "dev-tools", "name": "dev-tools", "status": "Up"}
+        self.assertEqual(monitor.container_display_name(row), "dev-tools")
+
+    def test_docker_random_name_falls_back_to_project_label(self):
+        row = {"project": "dev-tools", "name": "dreamy_bose", "status": "Up"}
+        self.assertEqual(monitor.container_display_name(row), "dev-tools")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1078,6 +1078,39 @@ def scan(label_map: dict[str, str] | None = None,
     return sessions
 
 
+def container_display_name(c: dict) -> str:
+    """Resolve the text drawn in a docker row.
+
+    The launcher now names a container after its project label and suffixes
+    duplicates (`dev-tools`, `dev-tools-2`, ...), so the docker name is a
+    strictly-more-specific identifier than the project label WHEN it carries
+    that prefix. The prefix test is what makes the fallback safe: a
+    docker-generated name (the two-random-words kind, e.g. `dreamy_bose`)
+    never carries the project label as a prefix and would be noise where the
+    label is the meaningful text, so those containers keep displaying their
+    project label exactly as before the launcher change.
+
+    This is a DISPLAY rule only. The project label remains the identifier
+    used for sorting, for the container->session label maps
+    (label_map / sessionid_to_label / container_info) and for filtering; the
+    docker row stays keyed by the container name. Nothing downstream should
+    start treating this return value as an identity.
+
+    Lives at module level, outside MonitorApp, so it is unit-testable
+    without tkinter — the same reason state_files_mode() is not inlined at
+    its call site.
+    """
+    name = c.get("name")
+    project = c.get("project")
+    if not isinstance(name, str) or not name:
+        return project if isinstance(project, str) else ""
+    if not isinstance(project, str) or not project:
+        return project if isinstance(project, str) else ""
+    if name.startswith(project):
+        return name
+    return project
+
+
 def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict]:
     """List running Docker containers that carry a 'project' label.
 
@@ -2095,8 +2128,9 @@ class MonitorApp:
             if row is None:
                 row = self._make_container_row()
                 self._container_rows[key] = row
-            if row["project"].cget("text") != c["project"]:
-                row["project"].config(text=c["project"])
+            display = container_display_name(c)
+            if row["project"].cget("text") != display:
+                row["project"].config(text=display)
             if row["status"].cget("text") != c["status"]:
                 row["status"].config(text=c["status"])
         for key in list(self._container_rows):
