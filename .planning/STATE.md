@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: state-writer-shadow-mode
 status: executing
-stopped_at: "Completed quick task 260731-an2: bg-shell time-cap on grey pin"
-last_updated: "2026-07-31T07:49:58.641Z"
-last_activity: 2026-07-30
-last_activity_desc: "Completed quick task 260730-kgw: container-keyed session aliases"
+stopped_at: "Completed quick task 260731-c52: docker rows show container name on duplicate projects"
+last_updated: "2026-07-31T08:52:15.706Z"
+last_activity: 2026-07-31
+last_activity_desc: "Completed quick task 260731-bu8: Ctrl+B manually-backgrounded shells now light the ⚙ badge"
 progress:
   total_phases: 2
   completed_phases: 1
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
 Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-07-31 — Completed quick task 260731-bu8: Ctrl+B manually-backgrounded shells now light the ⚙ badge
+Last activity: 2026-07-31 — Completed quick task 260731-c52: docker rows show container name on duplicate projects
 
 Progress: [█████████░] 86%
 
@@ -95,6 +95,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-04]: a verdict-pair change mid-episode opens a fresh divergence episode (ticks resets to 1) rather than continuing the prior one's count
 - [Phase ?]: [Phase 02-04]: filter_divergence_events() is a pure records-in/state-in -> events/next-state-out function, no MonitorApp mutation, so episode collapse is unit-testable without tkinter
 - [Phase ?]: [quick-260731-an2]: BG_PIN_MAX_SEC=900s time-caps the legacy bg-shell WORKING pin (status decision only, badge stays uncapped); TEST-MATRIX section 4 records the same cap requirement for the Phase 3 hook-native rule
+- [Phase ?]: [quick-260731-c52]: container_display_name() prefix test (name.startswith(project)) is the sole disambiguation rule — anchors displayed text to the row's own project label so a duplicate container is distinguishable without changing sorting/keying/mapping identity
 
 ### Pending Todos
 
@@ -118,6 +119,7 @@ Recent decisions affecting current work:
 | 260730-kgw | Fix session aliases lost on /clear: key aliases by container identity instead of sessionId | 2026-07-30 | e558946 | [260730-kgw-fix-session-aliases-lost-on-clear-key-al](./quick/260730-kgw-fix-session-aliases-lost-on-clear-key-al/) |
 | 260731-an2 | Bg shells are badge-only: never pin WORKING (rev.2 dropped the initial 15-min cap) — dev server no longer holds the overlay grey | 2026-07-31 | 9f18b8f | [260731-an2-bg-shell-time-cap-grey-pin-from-backgrou](./quick/260731-an2-bg-shell-time-cap-grey-pin-from-backgrou/) |
 | 260731-bu8 | Recognize manually-backgrounded (Ctrl+B) shells in shell_tracker so the ⚙ badge lights up for them | 2026-07-31 | bbb2444 | [260731-bu8-recognize-manually-backgrounded-ctrl-b-s](./quick/260731-bu8-recognize-manually-backgrounded-ctrl-b-s/) |
+| 260731-c52 | Docker rows show the container name when it disambiguates a duplicate project (dev-tools / dev-tools-2), else fall back to the project label | 2026-07-31 | ebb25b0 | [260731-c52-container-rows-show-docker-name-when-it-](./quick/260731-c52-container-rows-show-docker-name-when-it-/) |
 
 ## Deferred Items
 
@@ -129,6 +131,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-31T07:49:42.458Z
-Stopped at: Completed quick task 260731-an2: bg-shell time-cap on grey pin
+Last session: 2026-07-31T08:51:46.303Z
+Stopped at: Completed quick task 260731-c52: docker rows show container name on duplicate projects
 Resume file: None
