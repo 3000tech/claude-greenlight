@@ -183,6 +183,34 @@ def _manual_bg_shell_start(shell_id: str, tool_use_id: str,
     return [use, res]
 
 
+def _bg_task_notification(task_id: str, tool_use_id: str, status: str = "completed",
+                          session_id: str = "s1") -> str:
+    """Live completion shape for a backgrounded shell: a `queue-operation`
+    record (not a user message) whose `content` string holds the
+    <task-notification> block, with <tool-use-id> and <output-file> lines
+    between the task-id and the status — reproducing the ~180-character gap
+    the real notification carries, so a future regression in TASK_NOTIF_RE's
+    gap allowance would be caught here."""
+    output_path = (
+        f"/tmp/claude-1000/-workspace/session-uuid/tasks/{task_id}.output"
+    )
+    body = (
+        "<task-notification>\n"
+        f"<task-id>{task_id}</task-id>\n"
+        f"<tool-use-id>{tool_use_id}</tool-use-id>\n"
+        f"<output-file>{output_path}</output-file>\n"
+        f"<status>{status}</status>\n"
+        "<summary>done</summary>\n"
+        "</task-notification>"
+    )
+    return _line({
+        "type": "queue-operation",
+        "operation": "task-notification",
+        "sessionId": session_id,
+        "content": body,
+    })
+
+
 def _task_notification(task_id: str, status: str = "completed",
                        session_id: str = "s1") -> str:
     """Async-agent completion signal: a `<task-notification>` injected as a
@@ -484,6 +512,46 @@ class Goal2i_ManualBgShellDetected(MonitorTestBase):
         [s] = self._scan({"-workspace-app": "app"})
         self.assertEqual(s["status"], "WAITING")
         self.assertTrue(s["bg"])
+
+    def test_manual_bg_shell_completion_clears_badge(self):
+        """G2i-2: the manually-backgrounded shell's completion notification
+        clears the badge with no new termination code — TASK_NOTIF_RE already
+        matches any task-id regardless of which marker started it. Uses the
+        live `queue-operation` shape with the intervening tool-use-id and
+        output-file lines that separate the real gap from the pattern's
+        allowance."""
+        _write_session(self.root, "-workspace-app", [
+            *_manual_bg_shell_start("b0rui8k6c", "tu_manual_start"),
+            _bg_task_notification("b0rui8k6c", "tu_manual_start"),
+            _assistant([_text_block("shell finished")]),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertFalse(s["bg"])
+
+    def test_escaped_echo_of_manual_marker_does_not_spoof_badge(self):
+        """G2i-3: an escaped grep/cat echo of a jsonl containing the manual
+        marker must NOT light the badge. Observed live in the same session as
+        the real marker: a later tool_result whose content is itself a
+        fragment of jsonl text with every inner quote escaped
+        (\\"type\\":\\"tool_result\\"...), which cannot satisfy a pattern
+        requiring unescaped quotes immediately around the type/content keys.
+        This is the concrete reason the anchoring exists — if this test fails,
+        the anchoring was relaxed and that is the bug, not this test."""
+        escaped_echo = (
+            '{"type": "user", "sessionId": "s1", "message": {"content": [{'
+            '"tool_use_id": "tu_grep", "type": "tool_result", '
+            '"content": "grep output:\\n{\\"tool_use_id\\":\\"tu_x\\",\\"type\\":\\"tool_result\\",'
+            '\\"content\\":\\"Command was manually backgrounded by user with ID: b0rui8k6c. '
+            'Output is being written to: /tmp/x.output\\"}", '
+            '"is_error": false}]}}'
+        )
+        _write_session(self.root, "-workspace-app", [
+            _assistant([_text_block("checking logs")]),
+            escaped_echo,
+            _assistant([_text_block("nothing new")]),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertFalse(s["bg"])
 
 
 # ---------------------------------------------------------------------------
