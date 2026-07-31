@@ -134,6 +134,55 @@ def _bg_shell_start(shell_id: str, tool_use_id: str,
     return [use, res]
 
 
+def _manual_bg_shell_start(shell_id: str, tool_use_id: str,
+                           session_id: str = "s1") -> list[str]:
+    """Two records mirroring a live Ctrl+B capture (2026-07-31, cc 2.1.220+):
+    the assistant's Bash tool_use with a PLAIN foreground input (no
+    run_in_background key — the command started in the foreground and the
+    user promoted it), and the tool_result announcing the manual background
+    marker. The tool_result's message.content keys are written in the live
+    order — tool_use_id, then type, then content, then is_error — to prove
+    shell_tracker.BG_START_RE's anchor tolerates tool_use_id preceding type
+    (the anchor only constrains the brace-free span from type to content).
+    Carries the live toolUseResult shape (backgroundTaskId/backgroundedByUser)
+    as documentation of intent, even though the parser doesn't key off it.
+    Like _bg_shell_start, the type key must precede the content key with no
+    nested object in between, or the fixture silently stops matching."""
+    use = _line({
+        "type": "assistant",
+        "sessionId": session_id,
+        "message": {"content": [{
+            "type": "tool_use", "id": tool_use_id, "name": "Bash",
+            "input": {"command": "npm run dev"},
+        }]},
+    })
+    result_text = (
+        f"Command was manually backgrounded by user with ID: {shell_id}. "
+        "Output is being written to: "
+        f"/tmp/claude-1000/-workspace/session-uuid/tasks/{shell_id}.output"
+    )
+    res = _line({
+        "type": "user",
+        "sessionId": session_id,
+        "message": {"content": [{
+            "tool_use_id": tool_use_id,
+            "type": "tool_result",
+            "content": result_text,
+            "is_error": False,
+        }]},
+        "toolUseResult": {
+            "stdout": "",
+            "stderr": "",
+            "interrupted": False,
+            "isImage": False,
+            "noOutputExpected": False,
+            "backgroundTaskId": shell_id,
+            "backgroundedByUser": True,
+        },
+    })
+    return [use, res]
+
+
 def _task_notification(task_id: str, status: str = "completed",
                        session_id: str = "s1") -> str:
     """Async-agent completion signal: a `<task-notification>` injected as a
@@ -408,6 +457,33 @@ class Goal2h_BgShellBadgeOnly(MonitorTestBase):
         ], mtime=stale)
         [s] = self._scan({"-workspace-app": "app"})
         self.assertEqual(s["status"], "WORKING")
+
+
+# ---------------------------------------------------------------------------
+# GOAL 2i — A shell the user backgrounded by hand (Ctrl+B) is detected exactly
+# like one Claude backgrounded itself. Ground truth: live jsonl capture,
+# 2026-07-31, cc 2.1.220+.
+# ---------------------------------------------------------------------------
+
+class Goal2i_ManualBgShellDetected(MonitorTestBase):
+    """A shell the user backgrounded by hand must be reported by the ⚙ badge
+    exactly like one Claude backgrounded itself — the user cannot be expected
+    to know which code path put a running shell into the background, so the
+    monitor's answer to "is something still running?" must not depend on it."""
+
+    def test_manual_bg_shell_lights_badge_stays_waiting(self):
+        """G2i-1: manual-start marker + ended turn → bg badge lights (True)
+        and status is WAITING, not WORKING — the badge-only invariant from
+        quick 260731-an2 rev.2 survives the widened start detection. The only
+        tail signal after the start marker is a plain assistant text block,
+        so nothing else could account for either assertion."""
+        _write_session(self.root, "-workspace-app", [
+            *_manual_bg_shell_start("b0rui8k6c", "tu_manual_start"),
+            _assistant([_text_block("noted")]),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertEqual(s["status"], "WAITING")
+        self.assertTrue(s["bg"])
 
 
 # ---------------------------------------------------------------------------

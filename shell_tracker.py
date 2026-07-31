@@ -1,14 +1,18 @@
 """Track background-shell state from a Claude Code jsonl session log.
 
-Claude Code (≥2.1) reports a bg Bash start with a tool_result containing:
-    Command running in background with ID: <shell_id>. Output is being written to: ...
+A Bash command can reach the background two ways, and Claude Code (≥2.1)
+writes a different tool_result marker for each:
+  - Claude starts it that way (run_in_background=True input):
+        Command running in background with ID: <shell_id>. Output is being written to: ...
+  - The user promotes a running foreground command with Ctrl+B:
+        Command was manually backgrounded by user with ID: <shell_id>. Output is being written to: ...
 
-Shells terminate via:
+Termination is identical for both paths, so only start detection is dual:
   - Explicit KillShell tool_use with input.shell_id = <shell_id>
   - Older variants: <task_id>...</task_id> + <status>completed|failed|cancelled</status>
 
-A shell is considered "active" if its start marker appears in the tail window
-and no subsequent terminal signal for that ID is present.
+A shell is considered "active" if its start marker (either form) appears in
+the tail window and no subsequent terminal signal for that ID is present.
 """
 from __future__ import annotations
 
@@ -20,9 +24,14 @@ TAIL_BYTES = 10 * 1024 * 1024  # 10MB — enough to cover the full jsonl in prac
 # so we don't lose sight of long-running bg shells started hours ago.
 
 # Anchor to the tool_result `content` field so we don't match the phrase when
-# it merely appears inside shell output (e.g. grep/tail results quoting the text).
+# it merely appears inside shell output (e.g. grep/tail results quoting the
+# text) or an escaped grep/cat echo of a jsonl (inner quotes escaped as \"
+# won't satisfy the unescaped `"type"`/`"content"` keys this pattern requires).
+# In the user-initiated (Ctrl+B) record, tool_use_id precedes type — harmless,
+# since the anchor only constrains the brace-free span from type to content.
 BG_START_RE = re.compile(
-    rb'"type"\s*:\s*"tool_result"[^{}]*?"content"\s*:\s*"Command running in background with ID:\s*([A-Za-z0-9_]+)'
+    rb'"type"\s*:\s*"tool_result"[^{}]*?"content"\s*:\s*'
+    rb'"Command (?:running in background|was manually backgrounded by user) with ID:\s*([A-Za-z0-9_]+)'
 )
 # A raw `tool_use` with name=Monitor; grep/cat output quoting a jsonl has
 # quotes escaped as \" and won't match this unescaped form, avoiding false positives.
