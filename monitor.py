@@ -120,6 +120,19 @@ USER_PROMPT_WORKING_SEC = 90
 # window has to cover realistic model+tool latencies. Bounded by MAX_AGE_SEC
 # overall so truly abandoned sessions still drop out of the list after an hour.
 TOOL_RESULT_WORKING_SEC = 900  # 15 min
+# Caps how long a live background shell alone may hold a session grey after
+# the jsonl has gone silent. Same magnitude as TOOL_RESULT_WORKING_SEC — the
+# project's existing "longest plausible in-flight window" — so there is one
+# tunable order-of-magnitude for "work might still be happening" instead of
+# two competing ones. Essentially every finite bg task (build, test suite,
+# install) finishes inside it, and finishing re-invokes Claude with a fresh
+# UserPromptSubmit that re-pins grey via the working-lock (TEST-MATRIX case
+# 13) — so the typical case never loses its grey. The accepted trade-off: a
+# truly eternal process (dev server, watcher) goes green ~15 min after the
+# turn ends instead of never, while the bg badge keeps reporting it, so no
+# information is lost — only the false "Claude is busy" claim. Bounded well
+# under MAX_AGE_SEC so the session is still visible when it flips.
+BG_PIN_MAX_SEC = 900  # 15 min
 # Notification WAV played on every long-work-ready transition. Order matters:
 # the first file that exists wins. `tada.wav` is the classic Windows "ta-da!"
 # three-note flourish — short, musical, identical across devices. Fallback
@@ -960,7 +973,11 @@ def scan(label_map: dict[str, str] | None = None,
         # user tails (without new events) go GREEN so interrupted/abandoned
         # sessions don't get stuck grey forever — but tool_result tails get a
         # much longer grace window because the follow-up turn can legitimately
-        # take many minutes (slow bash, deep thinking, long web research).
+        # take many minutes (slow bash, deep thinking, long web research). A
+        # bg shell pins grey only while the jsonl is fresh (age < BG_PIN_MAX_SEC):
+        # an eternal background process (dev server, file watcher) is not
+        # evidence that Claude owes anyone a reply, while a finite one
+        # re-invokes Claude on completion and gets re-pinned by the working-lock.
         tail_kind = user_tail_kind(last_line)
         if tail_kind == "tool_result":
             fresh_user_tail = age < TOOL_RESULT_WORKING_SEC
@@ -1011,9 +1028,17 @@ def scan(label_map: dict[str, str] | None = None,
                     working_locked = False
             except OSError:
                 pass
+        # Time-cap the bg-shell pin only — monitors, agents and async_agents
+        # are NOT capped: a foreground Agent genuinely blocks the turn,
+        # Monitor tasks terminate via TaskStop or their own timeout, and
+        # async agents end with a task-notification. None of them has the
+        # unbounded-lifetime shape that makes a bg shell pin forever, so
+        # widening the cap to them would be an unrequested behaviour change
+        # during the shadow-mode review window.
+        bg_pinned = has_bg and age < BG_PIN_MAX_SEC
         if auq_locked:
             status, dot, color, rank = "WAITING", "●", "#4ade80", 1
-        elif (agents > 0 or async_agents > 0 or monitors > 0 or has_bg
+        elif (agents > 0 or async_agents > 0 or monitors > 0 or bg_pinned
                 or is_certainly_working(last_line) or fresh_user_tail
                 or working_locked):
             status, dot, color, rank = "WORKING", "●", "#666", 2
