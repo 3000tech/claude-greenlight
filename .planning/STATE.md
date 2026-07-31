@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 02 (state-writer-shadow-mode) — EXECUTING
 Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-07-31 — Completed quick task 260731-an2 rev.2: bg shells badge-only, never pin WORKING (dev-server grey-forever fix)
+Last activity: 2026-07-31 — Completed quick task 260731-bu8: Ctrl+B manually-backgrounded shells now light the ⚙ badge
 
 Progress: [█████████░] 86%
 
@@ -117,6 +117,7 @@ Recent decisions affecting current work:
 |---|-------------|------|--------|-----------|
 | 260730-kgw | Fix session aliases lost on /clear: key aliases by container identity instead of sessionId | 2026-07-30 | e558946 | [260730-kgw-fix-session-aliases-lost-on-clear-key-al](./quick/260730-kgw-fix-session-aliases-lost-on-clear-key-al/) |
 | 260731-an2 | Bg shells are badge-only: never pin WORKING (rev.2 dropped the initial 15-min cap) — dev server no longer holds the overlay grey | 2026-07-31 | 9f18b8f | [260731-an2-bg-shell-time-cap-grey-pin-from-backgrou](./quick/260731-an2-bg-shell-time-cap-grey-pin-from-backgrou/) |
+| 260731-bu8 | Recognize manually-backgrounded (Ctrl+B) shells in shell_tracker so the ⚙ badge lights up for them | 2026-07-31 | bbb2444 | [260731-bu8-recognize-manually-backgrounded-ctrl-b-s](./quick/260731-bu8-recognize-manually-backgrounded-ctrl-b-s/) |
 
 ## Deferred Items
 
