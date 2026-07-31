@@ -81,19 +81,19 @@ mechanism that does not exist yet.
 - **What the live data showed:** Sì: Stop fire con bg task in volo (13:02:38, task vivo fino a 13:03:02) — il verde-su-Stop naive è un rischio reale. MA lo stesso Stop porta background_tasks: il conteggio (btc) è ora catturato dal logger e già campionato live (btc=1).
 - **Decision:** keep current grey-while-working semantics (needs
   `shell_tracker`), or accept green-on-`Stop` — per D-07, preserve current semantics unless live data contradicts them: **semantica attuale confermata** (overlay grigio tenuto durante bg task, verificato live) e implementabile hook-nativamente: Stop con background_tasks_count>0 → resta working; shell_tracker non serve più per lo stato, solo per i badge (V2-01).
-- **Cap temporale (quick task 260731-an2, 2026-07-31):** la regola hook-nativa
-  decisa sopra — Stop con background_tasks_count>0 → resta working — eredita
-  lo stesso bug di pin illimitato del ramo legacy `has_active_shells`: un
-  processo eterno (dev server lanciato con run_in_background) tiene la
-  sessione grigia per sempre. Lo stesso cap temporale va quindi applicato
-  lato hook al flip di Phase 3, misurato sull'età dell'ultimo evento/heartbeat
-  della sessione anziché sull'mtime del jsonl (il motore hook non ha un
-  jsonl da datare) — analogo legacy: `BG_PIN_MAX_SEC` in monitor.py. Il caso
-  finito deve restare grigio con lo stesso ragionamento del fix legacy: il
-  caso 13 (re-invocazione da bg task emette UserPromptSubmit) è ciò che rende
-  il cap sicuro. Il cap si applica solo allo STATO: il badge contatore ◉N
-  alimentato da background_tasks_count resta senza cap (caso 18), altrimenti
-  si perde l'informazione "processi bg attivi" che è lo scopo del badge.
+- **Revisione (quick task 260731-an2 rev.2, 2026-07-31):** decisione
+  ribaltata rispetto alla rev.1 (che proponeva un cap temporale) — NESSUN
+  cap. `background_tasks_count>0` non deve MAI tenere lo stato a working:
+  alimenta solo il badge contatore ◉N (caso 18), esattamente come nel fix
+  legacy gemello (rimosso `BG_PIN_MAX_SEC`/`bg_pinned` da `monitor.py`, `has_bg`
+  fuori dalla OR-chain dello stato). Un bg shell/task non è di per sé prova
+  che Claude debba una risposta. Il grigio durante un turno ri-invocato da bg
+  task resta coperto dal caso 13 (UserPromptSubmit → working-lock lato
+  legacy, meccanismo equivalente lato hook-native al flip di Phase 3), non
+  dal segnale bg stesso. Trade-off accettato dall'utente: un turno che finisce
+  mentre un bg task finito è ancora in corso (build/test/install) mostra
+  verde e notifica subito, col badge che continua a mostrare il processo
+  attivo.
 
 ---
 
