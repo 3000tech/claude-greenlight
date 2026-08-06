@@ -88,6 +88,13 @@ STATE_PROMPT_STALE_SEC = 90
 # (RESEARCH Pitfall 10). 24h is far past MAX_AGE_SEC's one-hour visibility
 # window, so pruning can never remove a file the engine would still show.
 STATE_PRUNE_AGE_SEC = 86400
+# SessionEnd tombstone marker suffix (D-06): hooks/state-writer.sh drops a
+# zero-byte "<session_id>.ended" file alongside removing the state file, so
+# a cleanly-ended session's ghost jsonl row can never resurrect through the
+# legacy_origin bridge (scan_state_files() below), even across a monitor
+# restart that would otherwise forget an in-process suppression set. Chosen
+# so it can never collide with the "*.json" glob the state-record loop uses.
+STATE_TOMBSTONE_SUFFIX = ".ended"
 # Optional launcher-registry integration: a shell script with a PROJECTS=( ... )
 # array (label|... entries) that controls project naming and display order.
 # Point CLAUDE_LAUNCHER_SH at it; without it, labels fall back to path segments.
@@ -610,7 +617,13 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     SessionEnd already removes a file on every clean exit/resume/clear, so
     this best-effort sweep only ever catches the one hook-silent path — a
     killed container — well after MAX_AGE_SEC has already hidden it
-    (STATE_PRUNE_AGE_SEC, 24h, is 24x the one-hour visibility window).
+    (STATE_PRUNE_AGE_SEC, 24h, is 24x the one-hour visibility window). Two
+    more sweeps run alongside it, same age threshold, same best-effort
+    single-file-failure isolation: orphaned SessionEnd tombstones
+    (STATE_TOMBSTONE_SUFFIX markers — see below) and leftover atomic-write
+    `*.json.tmp.*` files from an interrupted write (D-08/T-03-03) — the
+    writer's tmp+rename completes in milliseconds, so anything this old is
+    unambiguously orphaned, never a write genuinely in flight.
 
     `legacy_sessions` (ENG-05's migration bridge, D-02c, TEST-MATRIX case
     21): every session `refresh()`'s already-computed legacy `scan()` saw
@@ -621,6 +634,16 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     `scan(label_map, sessionid_to_label)` runs internally instead, so a
     standalone caller still sees the complete picture without a second
     full jsonl scan every tick.
+
+    SessionEnd tombstones (D-06): hooks/state-writer.sh drops a
+    STATE_TOMBSTONE_SUFFIX marker alongside removing a session's state
+    file. A legacy entry whose key/session_id matches a live tombstone is
+    excluded from the bridge above — the state engine SAW this session end,
+    so its still-fresh jsonl must never resurrect it as a ghost row, even
+    across a monitor restart (an in-process suppression set would forget on
+    restart; the on-disk marker doesn't). A resumed session's own fresh
+    state record deletes its stale tombstone as it's read, so a resume can
+    never be suppressed by its own earlier SessionEnd.
     """
     if legacy_sessions is None:
         legacy_sessions = scan(label_map, sessionid_to_label, container_info=container_info)
@@ -636,8 +659,48 @@ def scan_state_files(label_map: dict[str, str] | None = None,
             legacy_by_id[sid] = legacy
 
     sessions: list[dict] = []
+    tombstone_ids: set[str] = set()
     if STATE_DIR.is_dir():
         now = time.time()
+        # Sweep 1: SessionEnd tombstones (D-06). A tombstone marks a
+        # session the state engine SAW end — the legacy bridge below must
+        # never resurrect it as a ghost row via that session's still-fresh
+        # jsonl. Pruned past STATE_PRUNE_AGE_SEC exactly like an orphaned
+        # state file; a single bad stat/unlink drops only that one marker.
+        try:
+            tombstones = list(STATE_DIR.glob(f"*{STATE_TOMBSTONE_SUFFIX}"))
+        except OSError:
+            tombstones = []
+        for t in tombstones:
+            try:
+                t_mtime = t.stat().st_mtime
+            except OSError:
+                continue
+            if now - t_mtime > STATE_PRUNE_AGE_SEC:
+                try:
+                    t.unlink()
+                except OSError:
+                    pass
+                continue
+            tombstone_ids.add(t.name[:-len(STATE_TOMBSTONE_SUFFIX)])
+        # Sweep 2: orphaned atomic-write temp files (D-08/T-03-03). The
+        # writer's tmp+rename completes in milliseconds, so anything past
+        # STATE_PRUNE_AGE_SEC is unambiguously interrupted, never a write
+        # genuinely in flight.
+        try:
+            temp_files = list(STATE_DIR.glob("*.json.tmp.*"))
+        except OSError:
+            temp_files = []
+        for tf in temp_files:
+            try:
+                tf_mtime = tf.stat().st_mtime
+            except OSError:
+                continue
+            if now - tf_mtime > STATE_PRUNE_AGE_SEC:
+                try:
+                    tf.unlink()
+                except OSError:
+                    pass
         try:
             entries = list(STATE_DIR.glob("*.json"))
         except OSError:
@@ -733,10 +796,24 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 "alias_key": derive_alias_key(hostname, session_id),
                 "display_name": session_display_name(name, hostname, hostname_to_name),
             })
+            if session_id in tombstone_ids:
+                # A live state record for this session id proves it's a
+                # resumed session, not a stale end-of-session marker —
+                # delete the tombstone so the resume can never be
+                # suppressed by its own earlier SessionEnd.
+                try:
+                    (STATE_DIR / f"{session_id}{STATE_TOMBSTONE_SUFFIX}").unlink()
+                except OSError:
+                    pass
+                tombstone_ids.discard(session_id)
 
     seen_keys = {s["key"] for s in sessions}
     for legacy in legacy_sessions:
         if legacy["key"] in seen_keys:
+            continue
+        if legacy["key"] in tombstone_ids or legacy.get("session_id") in tombstone_ids:
+            # The state engine SAW this session end (D-06) — its still-
+            # fresh jsonl must never resurrect it as a ghost row.
             continue
         carried = dict(legacy)
         carried["legacy_origin"] = True

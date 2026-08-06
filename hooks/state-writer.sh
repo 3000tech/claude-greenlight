@@ -56,7 +56,11 @@
 #     the verdict after the turn already ended)
 #   SessionEnd                               -> removes the state file,
 #     unconditionally, for every `reason` value (prunes /resume picker and
-#     /clear orphans, cases 10/11/14)
+#     /clear orphans, cases 10/11/14), AND drops a zero-byte
+#     "<session_id>.ended" tombstone marker (D-06) — monitor.py's
+#     scan_state_files() reads it to suppress the legacy_origin bridge for
+#     this session, so a cleanly-ended session's still-fresh jsonl can
+#     never resurrect it as a ghost row, even across a monitor restart
 #   any other/unregistered event name        -> no write
 #
 # `idle` is an internal writer state with no separate rendering: the engine
@@ -93,9 +97,13 @@ mkdir -p "$state_dir"
 # SessionEnd removes the state file unconditionally for every `reason`
 # value — this is the ONE branch that never reaches the record builder
 # below. Handled first, ahead of the state-resolution case, since it has no
-# `state` to resolve at all.
+# `state` to resolve at all. The tombstone write sits AFTER this point
+# deliberately: $sid has already passed the session_id allowlist guard
+# above, so the tombstone path is built from the exact same validated
+# value as the state-file path — never a second, weaker path build.
 if [ "$event" = "SessionEnd" ]; then
   rm -f "$state_dir/$sid.json"
+  : > "$state_dir/$sid.ended"
   exit 0
 fi
 

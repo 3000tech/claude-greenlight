@@ -1608,6 +1608,86 @@ class Goal13_HooklessFallback(unittest.TestCase):
         self.assertNotIn("legacy_origin", by_key["a"])
 
 
+# ---------------------------------------------------------------------------
+# GOAL 24 — SessionEnd tombstones suppress ghost rows (D-06) and orphaned
+# atomic-write temp files sweep themselves (D-08/T-03-03).
+# ---------------------------------------------------------------------------
+
+class Goal24_SessionEndTombstones(StateFileTestBase):
+
+    def _write_tombstone(self, session_id: str, mtime: float | None = None) -> Path:
+        f = self.root / f"{session_id}{monitor.STATE_TOMBSTONE_SUFFIX}"
+        f.write_text("", encoding="utf-8")
+        if mtime is not None:
+            os.utime(f, (mtime, mtime))
+        return f
+
+    def test_tombstoned_legacy_session_is_not_carried_through_bridge(self):
+        """Test 3: a legacy session whose key matches a live tombstone is
+        excluded from the legacy_origin bridge."""
+        self._write_tombstone("s1")
+        legacy = [{"key": "s1", "session_id": "s1", "name": "L",
+                   "status": "WAITING", "mtime": time.time(),
+                   "working_locked": False, "agent_activity": False}]
+        sessions = monitor.scan_state_files(legacy_sessions=legacy)
+        self.assertEqual([s["key"] for s in sessions if s["key"] == "s1"], [])
+
+    def test_legacy_session_without_tombstone_still_bridges(self):
+        """Test 4: the D-02c hookless bridge is unaffected when no
+        tombstone exists for that session."""
+        legacy = [{"key": "s1", "session_id": "s1", "name": "L",
+                   "status": "WAITING", "mtime": time.time(),
+                   "working_locked": False, "agent_activity": False}]
+        sessions = monitor.scan_state_files(legacy_sessions=legacy)
+        [s] = sessions
+        self.assertEqual(s["key"], "s1")
+        self.assertTrue(s.get("legacy_origin"))
+
+    def test_stale_tombstone_unlinked_fresh_one_kept(self):
+        """Test 5: a tombstone older than STATE_PRUNE_AGE_SEC is unlinked
+        by the sweep; one younger than that survives."""
+        old = self._write_tombstone(
+            "ancient", mtime=time.time() - monitor.STATE_PRUNE_AGE_SEC - 10)
+        fresh = self._write_tombstone("fresh")
+        monitor.scan_state_files(legacy_sessions=[])
+        self.assertFalse(old.exists())
+        self.assertTrue(fresh.exists())
+
+    def test_stale_temp_file_unlinked_fresh_one_kept(self):
+        """Test 6: a leftover atomic-write temp file older than
+        STATE_PRUNE_AGE_SEC is swept; a freshly-created one is untouched."""
+        old_tmp = self.root / "s1.json.tmp.12345"
+        old_tmp.write_text('{"state": "waiting"}', encoding="utf-8")
+        os.utime(old_tmp, (time.time() - monitor.STATE_PRUNE_AGE_SEC - 10,) * 2)
+        fresh_tmp = self.root / "s2.json.tmp.67890"
+        fresh_tmp.write_text('{"state": "waiting"}', encoding="utf-8")
+        monitor.scan_state_files(legacy_sessions=[])
+        self.assertFalse(old_tmp.exists())
+        self.assertTrue(fresh_tmp.exists())
+
+    def test_tombstone_never_appears_as_a_session_row(self):
+        """Test 7: a tombstone is not picked up by the state-record glob —
+        it can never render as a session, with or without a matching
+        legacy entry."""
+        self._write_tombstone("ghost")
+        self._write_state("keep", state="waiting")
+        legacy = [{"key": "ghost", "session_id": "ghost", "name": "L",
+                   "status": "WAITING", "mtime": time.time(),
+                   "working_locked": False, "agent_activity": False}]
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"keep": "L"}, legacy_sessions=legacy)
+        self.assertEqual([s["key"] for s in sessions], ["keep"])
+
+    def test_resumed_session_deletes_its_own_stale_tombstone(self):
+        """A live state record for a session id proves it's a resumed
+        session, not a stale end-of-session marker — the tombstone must
+        not survive to suppress a future bridge entry for the same id."""
+        tombstone = self._write_tombstone("s1")
+        self._write_state("s1", state="waiting")
+        monitor.scan_state_files(sessionid_to_label={"s1": "L"})
+        self.assertFalse(tombstone.exists())
+
+
 class Goal6e_AliasKeyParityAcrossEngines(unittest.TestCase):
     """The legacy engine and the state-file engine must derive the SAME
     alias identity for the same container, so a label set in default mode

@@ -521,6 +521,43 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_session_end_removes_state_file_and_leaves_a_tombstone(self):
+        """Task 3 Test 1 (D-06): SessionEnd removes the state file AND
+        leaves a zero-byte tombstone marker named for the same session id."""
+        sid = "abc123"
+        self._stop(sid, background_tasks=[])
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        self.assertTrue(state_file.exists())
+
+        result = _run_state_writer(
+            _payload(event="SessionEnd", session_id=sid, reason="prompt_input_exit"), self.home,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(state_file.exists())
+
+        state_dir = _state_dir(self.home)
+        tombstones = [p for p in state_dir.iterdir() if p.name.startswith(sid)]
+        self.assertEqual(len(tombstones), 1, tombstones)
+        self.assertEqual(tombstones[0].name, f"{sid}.ended")
+        self.assertEqual(tombstones[0].stat().st_size, 0)
+
+    def test_session_end_with_path_traversal_session_id_writes_nothing(self):
+        """Task 3 Test 2: a session_id carrying a path separator or a
+        dot-dot segment must produce neither a state file, nor a tombstone,
+        nor any write outside the state directory — the tombstone write
+        sits after the same allowlist guard as the state-file path."""
+        result = _run_state_writer(
+            _payload(event="SessionEnd", session_id="../evil", reason="prompt_input_exit"), self.home,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        state_dir = _state_dir(self.home)
+        self.assertFalse(
+            state_dir.exists() and any(state_dir.iterdir()),
+            "SessionEnd wrote a file for a path-traversal session_id",
+        )
+        self.assertEqual([p for p in self.home.rglob("*") if p.is_file()], [])
+
     def test_background_task_descriptive_text_never_appears_in_state_file(self):
         sid = "no-leak"
         secret_marker = "SUPER-SECRET-COMMAND-rm-dash-rf-slash"
