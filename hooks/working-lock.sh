@@ -20,7 +20,14 @@
 # end-of-turn; the guard + max-age cover a missed Stop (interrupt/crash).
 #
 # Mode: $1 = "set" (UserPromptSubmit | PreToolUse) or "clear" (Stop).
-set -eu
+#
+# Deliberately NOT `set -e` (only `set -u`): this hook must always exit 0,
+# mirroring hooks/state-writer.sh's discipline (see its header comment). A
+# bare `mkdir`/`touch`/`rm -f` failure on a flaky 9p mount must never
+# propagate a non-zero exit back to Claude Code from a
+# PreToolUse/UserPromptSubmit/Stop hook, so every fallible filesystem
+# command below is explicitly guarded with `|| true`.
+set -u
 mode="${1:-}"
 sid=$(cat | jq -r '.session_id // empty' 2>/dev/null || true)
 [ -z "$sid" ] && exit 0
@@ -38,9 +45,9 @@ case "$sid" in
 esac
 
 lock_dir="$HOME/.claude/working-locks"
-mkdir -p "$lock_dir"
+mkdir -p "$lock_dir" 2>/dev/null || true
 case "$mode" in
-  set)   touch "$lock_dir/$sid" ;;
-  clear) rm -f "$lock_dir/$sid" ;;
+  set)   touch "$lock_dir/$sid" 2>/dev/null || true ;;
+  clear) rm -f "$lock_dir/$sid" 2>/dev/null || true ;;
 esac
 exit 0
