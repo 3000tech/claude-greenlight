@@ -24,8 +24,8 @@
 
 ### Flip & Cleanup
 
-- [ ] **FLIP-01**: After shadow validation, the state-file engine becomes the default and dead legacy parsing paths are removed
-- [ ] **FLIP-02**: `test_monitor.py` covers the state-file engine (all behaviors that had tests keep equivalent coverage; state-file fixtures replace jsonl fixtures where legacy code was removed)
+- [x] **FLIP-01**: After shadow validation, the state-file engine becomes the default and dead legacy parsing paths are removed
+- [x] **FLIP-02**: `test_monitor.py` covers the state-file engine (all behaviors that had tests keep equivalent coverage; state-file fixtures replace jsonl fixtures where legacy code was removed)
 - [ ] **FLIP-03**: `hooks/install.sh`, the settings snippet, and README document the new architecture and hook requirements
 
 ## v2 Requirements
@@ -54,6 +54,6 @@
 | ENG-04 | Phase 2 | Complete |
 | ENG-05 | Phase 2 | Complete |
 | ENG-06 | Phase 2 | Complete |
-| FLIP-01 | Phase 3 | Pending |
-| FLIP-02 | Phase 3 | Pending |
+| FLIP-01 | Phase 3 | Complete |
+| FLIP-02 | Phase 3 | Complete |
 | FLIP-03 | Phase 3 | Pending |

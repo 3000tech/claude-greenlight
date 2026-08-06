@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: flip-to-default-cleanup
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-08-06T11:37:05.718Z"
+stopped_at: Completed 03-02-PLAN.md
+last_updated: "2026-08-06T12:00:21.124Z"
 last_activity: 2026-08-06
 last_activity_desc: Phase 3 execution started
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 11
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 ## Current Position
 
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-08-06 — Phase 3 execution started
 
-Progress: [██████░░░░] 64%
+Progress: [███████░░░] 73%
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [██████░░░░] 64%
 | Phase 02 P03 | 14min | 3 tasks | 2 files |
 | Phase 02 P04 | 8min | 2 tasks | 2 files |
 | Phase 03 P01 | 13min | 2 tasks | 3 files |
+| Phase 03 P02 | 19min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,9 @@ Recent decisions affecting current work:
 - [Phase ?]: select_render_sessions() narrowed to a 1-arg identity seam (D-08); scan() stays live in refresh() to feed the D-02c bridge and plan 03-02's fallbacks — not dead code
 - [Phase ?]: scan_state_files() now stamps display_name via session_display_name()/container_display_name(), closing the duplicate-container regression the flip would have reintroduced (quick 260731-cgg)
 - [Phase ?]: Goal16's content-leak test (T-02-17) deleted with its legacy_evidence builder; the must_haves prohibition against reintroducing a prompt/tool-derived string assembler stays flagged, not silently closed
+- [Phase ?]: [Phase 03-02]: shell_tracker.py deleted; badge is hook-native (background_tasks_count) — D-02b's Monitor/Agent/async-agent evidence retained as a trimmed single-read in-file peek (_peek_agent_activity), never the bg-shell/badge-driving patterns
+- [Phase ?]: [Phase 03-02]: D-02a (Esc-interrupt early recovery) floored at STATE_PROMPT_STALE_SEC — an unfloored age<=window check misfired on same-instant hook/jsonl write-order races at genuine turn start (caught by the plan's own test suite, fixed as Rule 1)
+- [Phase ?]: [Phase 03-02]: SessionEnd tombstones use an on-disk marker (STATE_TOMBSTONE_SUFFIX=.ended), not an in-process suppression set, so D-06's ghost-row fix survives a monitor restart; a resumed session deletes its own stale tombstone as its fresh state record is read
 
 ### Pending Todos
 
@@ -138,6 +142,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T11:37:05.700Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-08-06T12:00:21.104Z
+Stopped at: Completed 03-02-PLAN.md
 Resume file: None
