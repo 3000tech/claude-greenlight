@@ -1,0 +1,350 @@
+---
+status: pending
+phase: 03-flip-to-default-cleanup
+plan: 04
+source: [03-01-SUMMARY.md, 03-02-SUMMARY.md, 03-03-SUMMARY.md, 02-DIVERGENCE-REVIEW.md, 03-CONTEXT.md]
+prepared: 2026-08-06
+mode: awaiting-live-run   # authored here (D-12); performed on the Windows machine, not from this execution environment
+---
+
+# Phase 3 Live Runbook — the flip, on the real machine
+
+## What this is, and why
+
+Shadow mode ran a full week (2026-07-30 → 2026-08-06) on the Windows machine; the Section E
+divergence review (`02-DIVERGENCE-REVIEW.md`) came back GREEN and the flip was approved. Plans
+03-01 through 03-03 then made the state-file engine the sole rendering source, added the D-02a/
+D-02b hybrid fallbacks, closed the ghost-row and orphan-temp-file gaps, made turn-end badge-only,
+and retired the AskUserQuestion lock hook — all against unit-test fixtures, in a code-only
+execution environment with no Docker and no real Claude Code sessions.
+
+This runbook confirms the flip behaves the same way on the machine that actually runs it, and
+performs the machine-side teardown that could not be done from here (D-12): deleting the
+divergence log, confirming the orphan temp-file sweep fired on its own, and — gated behind
+Section H — removing the retired `auq-lock.sh` from a live install.
+
+Per D-05, this is user-assisted UAT: the agent cannot `docker kill`/`pause` a live container,
+press Esc mid-turn, or open a real AskUserQuestion modal from inside this sandbox. Every step
+below is written to remove guesswork from what a human has to type and read, mirroring
+`01-UAT.md`/`02-UAT.md`'s convention exactly — it is now three phases old and reads fluently.
+
+---
+
+## Setup
+
+Run these once, in order, on the Windows machine, from inside a container with this repo
+checked out at the flipped commit.
+
+1. **Pull the flipped code** (this phase's commits) into the container's checkout.
+
+2. **Re-run the installer.**
+   ```bash
+   bash hooks/install.sh
+   ```
+   This installs `working-lock.sh`, `event-logger.sh` and `state-writer.sh`, and merges their
+   entries into `~/.claude/settings.json`. It does **not** install or register `auq-lock.sh` —
+   that hook is retired (D-04) and no longer shipped by the default path.
+
+3. **Record the per-script registration counts** — the expected shape now excludes the retired
+   lock:
+   ```bash
+   jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("working-lock\\.sh"))] | length' ~/.claude/settings.json   # expect 3
+   jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("state-writer\\.sh"))] | length' ~/.claude/settings.json      # expect 10
+   jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("event-logger\\.sh"))] | length' ~/.claude/settings.json       # expect 24 (hooks/hook-events.json length)
+   jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("auq-lock\\.sh"))] | length' ~/.claude/settings.json           # expect 0 — a FRESH install registers none
+   ```
+   If this container's `~/.claude/settings.json` carries a pre-flip `auq-lock.sh` registration
+   from before this phase, that count will be > 0 here — that is the existing-install case
+   Section H's teardown addresses, not a Setup failure.
+
+4. **Confirm state files are still being written.** After a minute or two of ordinary use in at
+   least one session:
+   ```bash
+   ls ~/.claude/monitor-state/
+   jq -c . ~/.claude/monitor-state/*.json   # each file must parse
+   ```
+
+5. **Confirm the monitor starts without any flag.**
+   ```
+   monitor.bat
+   ```
+   No `--state-files` flag, no error, overlay appears and renders live sessions. (The flag is
+   retained-but-inert per D-01's discretion — passing it is a no-op, not a requirement.)
+
+6. **Record the Claude Code version**, same discipline as `01-UAT.md`/`02-UAT.md`:
+   ```bash
+   claude --version
+   ```
+
+---
+
+## Sections
+
+### Section A — the flip is live
+
+**Trigger:** run one ordinary session end to end (a short prompt, a tool call, turn end).
+
+**Observe:**
+```bash
+cat ~/.claude/monitor-state/<session_id>.json
+```
+Compare the overlay's rendered state against this file's `state` field at each step (working →
+waiting). Confirm nothing in the overlay ever corresponds to a jsonl-derived verdict that
+disagrees with the state file — there is no second engine left to disagree with it.
+
+**Pass condition:** overlay state matches the state file at every observed point.
+
+---
+
+### Section B — Esc-interrupt recovery (D-02a)
+
+**Trigger:** start a long-running tool call, then press Esc mid-turn. Note the wall-clock time.
+
+**Observe:**
+```bash
+watch -n 5 'jq -c "{state,last_event}" ~/.claude/monitor-state/<session_id>.json'
+```
+Time how long the overlay takes to flip from grey to green.
+
+**Pass condition:** recovery lands at roughly 90 seconds (`STATE_PROMPT_STALE_SEC`), not the
+600-second heartbeat window (`STATE_HEARTBEAT_STALE_SEC`) — the D-02a early-recovery fallback
+reading the legacy jsonl's mtime-advance signal.
+
+---
+
+### Section C — hook-silence pin (D-02b, divergence class 6)
+
+**Trigger:** run a long Monitor-tool invocation or a foreground subagent that runs past 600
+seconds without a `PostToolUse`/`PostToolBatch` heartbeat.
+
+**Observe:** watch the overlay continuously across the 600-second mark; confirm no toast, sound,
+or taskbar flash fires while the tool/agent is still genuinely running.
+
+**Pass condition:** the session stays WORKING past 600 seconds with no false notification — the
+D-02b pin (Monitor/foreground-Agent/async-agent evidence via `_peek_agent_activity()`, or
+`working-lock.sh` evidence) holding it there instead of degrading to WAITING at the heartbeat
+window.
+
+---
+
+### Section D — the bridge (D-02c)
+
+**Trigger:** run a session from a container/image where `hooks/install.sh` was never run, so its
+`~/.claude/settings.json` has no `state-writer.sh` entries.
+
+**Observe:**
+```bash
+ls ~/.claude/monitor-state/   # confirm no file exists for this session_id
+```
+Watch the overlay for this session's row.
+
+**Pass condition:** the session with no state file stays visible in the overlay, rendered via the
+`legacy_origin` per-session transcript bridge — not dropped, not shown as "unknown".
+
+---
+
+### Section E — ghost suppression (D-06, SessionEnd tombstones)
+
+**Trigger:** end a session cleanly (exit Claude Code normally).
+
+**Observe:**
+```bash
+ls ~/.claude/monitor-state/*.ended   # tombstone for the ended session_id
+```
+Confirm the session's row disappears from the overlay immediately. Then restart the monitor
+(`monitor.bat`) and confirm the row does not reappear.
+
+**Pass condition:** the ended session's row stays gone both before and after a monitor restart —
+the on-disk tombstone (not an in-process set) is what survives the restart.
+
+---
+
+### Section F — paused container
+
+**Trigger:** mid-turn, `docker pause <container-id>`. Wait past the 600-second heartbeat window.
+
+**Observe:** watch the overlay for this session's row throughout the pause.
+
+**Pass condition:** the session stays visible as an ordinary row (no dimming, no new color, per
+D-05's "no new colors/notifications" fence) and does **not** degrade to WAITING purely from
+elapsed time while paused — the `hostname_to_status == "paused"` guard holding it WORKING.
+
+---
+
+### Section G — badge-only background rule (D-03)
+
+**Trigger:** ask for a background task, let the visible turn end while the background task is
+still running.
+
+**Observe:** watch the overlay at the moment the turn ends.
+
+**Pass condition:** the overlay goes green and notifies (toast/sound/taskbar flash) **immediately**
+at turn end — `background_tasks_count > 0` no longer holds the state WORKING — while the ◉N
+badge continues to show the background task's count until it finishes.
+
+---
+
+### Section H — the retirement gate (D-04) — **BLOCKING**
+
+**This section is the gate D-04 requires.** It must be recorded as passing before the Teardown's
+retired-lock removal step (below) is run. Do not run that Teardown step until this section's row
+in the Recording format table says PASS.
+
+**Trigger 1 — permission prompt:** trigger a tool outside the allowlist.
+
+**Observe:**
+```bash
+jq -c '{state,last_event}' ~/.claude/monitor-state/<session_id>.json
+```
+
+**Trigger 2 — AskUserQuestion modal:** ask Claude to use `AskUserQuestion`.
+
+**Observe:** same command as above, at the moment the modal appears.
+
+**Pass condition:** both triggers produce the waiting-on-you (`needs_input`) state — via the
+state writer's `PermissionRequest`/`Notification` event mapping — on a **fresh install that
+already has the retired `auq-lock.sh` absent** (confirm via the Setup step 3 registration count,
+which should read 0 on a fresh install). If this container's install is pre-flip and still has
+`auq-lock.sh` registered, run this section's triggers first, confirm the state-writer path
+independently produces the same `needs_input` verdict, and only then treat the section as passed
+before tearing `auq-lock.sh` down.
+
+---
+
+### Section I — preserved fixes (D-07)
+
+**Trigger 1 — alias survives `/clear`:** set an alias for a session, run `/clear` inside it.
+
+**Observe:** check the alias in the overlay/config UI immediately after the `/clear`.
+
+**Pass condition:** the alias is unchanged — aliases are keyed by container identity, not
+`session_id`, so a new `session_id` after `/clear` does not orphan it.
+
+**Trigger 2 — multi-monitor toast placement:** with a secondary display attached, trigger a
+notification (let a turn end).
+
+**Observe:** watch where the toast renders.
+
+**Pass condition:** the toast lands correctly clamped to a display, no off-screen placement.
+
+**Trigger 3 — 60-second notification threshold:** run a turn that completes in well under 60
+seconds of actual work.
+
+**Observe:** watch whether a notification fires.
+
+**Pass condition:** no notification fires for a turn shorter than the 60-second threshold
+(`NOTIFY_MIN_WORK_SEC`).
+
+---
+
+## Teardown
+
+Machine-side, explicitly **not** executable from the development environment.
+
+1. **Run the installer's retired-lock teardown mode — only after Section H is recorded as
+   passing in the table below:**
+   ```bash
+   bash hooks/install.sh --remove-auq-lock
+   ```
+2. **Delete the retired lock script from the live hooks directory, and the now-unused lock
+   directory:**
+   ```bash
+   rm -f ~/.claude/hooks/auq-lock.sh
+   rm -rf ~/.claude/auq-locks
+   ```
+3. **Delete the divergence log** (shadow mode is retired; nothing writes to it anymore):
+   ```bash
+   rm -f ~/.claude/monitor-divergence.log
+   ```
+4. **Confirm the known orphan temp file was swept automatically**, rather than deleting it by
+   hand — that is the observation this phase's stale-`.tmp` sweep (D-08) exists to produce:
+   ```bash
+   ls ~/.claude/monitor-state/*.tmp.* 2>/dev/null && echo "STILL PRESENT — sweep did not fire" || echo "swept — none found"
+   ```
+   (The known leftover from the shadow-mode review, `c1eb55f7-….json.tmp.13252`, is the specific
+   file to check for by name if it is still around from before this phase.)
+5. **Do NOT delete `~/.claude/monitor-state/`.** Unlike `02-UAT.md`'s shadow-era teardown line,
+   the state directory is **not** removed: post-flip it is the primary data source, not a
+   diagnostic side-channel. Deleting it would delete every live session's state.
+
+---
+
+## Recording format
+
+Same convention as `01-UAT.md`/`02-UAT.md`: **date, Claude Code version, outcome.** "No change
+observed" and "no divergence observed" are valid, valuable outcomes and must be written
+explicitly, not left blank — a blank cell is indistinguishable from a section that was never run.
+
+| Section | Date | CC version | Outcome |
+|---|---|---|---|
+| Setup (registration counts) | | | |
+| A — the flip is live | | | |
+| B — Esc-interrupt recovery | | | |
+| C — hook-silence pin | | | |
+| D — the bridge | | | |
+| E — ghost suppression | | | |
+| F — paused container | | | |
+| G — badge-only background rule | | | |
+| H — the retirement gate (BLOCKING) | | | |
+| I — preserved fixes | | | |
+| Teardown | | | |
+
+---
+
+## Tests
+
+<!-- UAT objective: the flip confirmed live end to end, the retirement gate passed before the
+retired lock was removed, and the machine-side teardown completed — filled in after the live run
+on the Windows machine. -->
+
+### 1. Setup — registration counts, state files writing, monitor starts flag-free
+expected: working-lock 3 / state-writer 10 / event-logger 24 / auq-lock 0 (fresh install); state files parse; monitor.bat starts with no flag
+result: pending
+
+### 2. Section A — the flip is live
+expected: overlay state matches monitor-state/*.json at every observed point
+result: pending
+
+### 3. Section B — Esc-interrupt recovery
+expected: recovery at ~90s, not 600s
+result: pending
+
+### 4. Section C — hook-silence pin
+expected: no false notification past 600s during genuine long-running tool/agent work
+result: pending
+
+### 5. Section D — the bridge
+expected: hookless session stays visible via legacy_origin bridge
+result: pending
+
+### 6. Section E — ghost suppression
+expected: ended session's row stays gone, including across a monitor restart
+result: pending
+
+### 7. Section F — paused container
+expected: paused session stays an ordinary visible row, no degrade to WAITING
+result: pending
+
+### 8. Section G — badge-only background rule
+expected: green + notify immediately at turn end regardless of background_tasks_count; badge still shows the count
+result: pending
+
+### 9. Section H — the retirement gate (BLOCKING)
+expected: needs_input state produced for both permission prompt and AskUserQuestion on a build without auq-lock.sh
+result: pending
+
+### 10. Section I — preserved fixes
+expected: alias survives /clear; toast placement correct on secondary display; sub-60s turn does not notify
+result: pending
+
+### 11. Teardown
+expected: auq-lock.sh removed only after Section H passed; divergence log deleted; orphan temp file confirmed auto-swept; monitor-state/ NOT deleted
+result: pending
+
+## Summary
+
+total: 11
+passed: 0
+issues: 0
+pending: 11
+skipped: 0
