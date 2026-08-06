@@ -1139,17 +1139,35 @@ class Goal8_NotificationDebounce(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class StateFileTestBase(unittest.TestCase):
-    """Wire a temp STATE_DIR into the monitor module for each test."""
+    """Wire a temp STATE_DIR into the monitor module for each test.
+
+    WR-03: also repoints PROJECTS_DIR to an empty temp directory. Any test
+    derived from this base that calls monitor.scan_state_files(...) without
+    an explicit legacy_sessions= argument (the large majority) triggers the
+    internal fallback that walks PROJECTS_DIR — without this, that fallback
+    would silently read the REAL (unmocked) ~/.claude/projects on whatever
+    machine runs the suite, the same isolation Goal13_HooklessFallback and
+    Goal6e_AliasKeyParityAcrossEngines already apply locally. Pointing it at
+    a real-but-empty temp dir (rather than passing legacy_sessions=[]
+    everywhere) keeps every existing call site — explicit or not —
+    hermetic with zero call-site changes.
+    """
 
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
+        self._tmp_projects = TemporaryDirectory()
         self.root = Path(self._tmp.name)
+        self.projects_root = Path(self._tmp_projects.name)
         self._orig_state_dir = monitor.STATE_DIR
+        self._orig_projects_dir = monitor.PROJECTS_DIR
         monitor.STATE_DIR = self.root
+        monitor.PROJECTS_DIR = self.projects_root
 
     def tearDown(self) -> None:
         monitor.STATE_DIR = self._orig_state_dir
+        monitor.PROJECTS_DIR = self._orig_projects_dir
         self._tmp.cleanup()
+        self._tmp_projects.cleanup()
 
     def _write_state(self, session_id: str, mtime: float | None = None,
                       omit: tuple[str, ...] = (), **fields) -> Path:
