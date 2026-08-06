@@ -1966,20 +1966,12 @@ class Goal16_DivergenceLogGuard(DivergenceLogTestBase):
 
 class Goal17_StateFilesMode(unittest.TestCase):
 
-    def test_flag_absent_returns_false(self):
-        self.assertFalse(monitor.state_files_mode(["monitor.py"]))
-
-    def test_flag_present_returns_true(self):
-        self.assertTrue(monitor.state_files_mode(["monitor.py", "--state-files"]))
-
-    def test_empty_argv_returns_false(self):
-        self.assertFalse(monitor.state_files_mode([]))
-
     def test_select_render_sessions_identity_reasserted(self):
-        legacy = ["legacy"]
-        shadow = ["shadow"]
-        self.assertIs(monitor.select_render_sessions(legacy, shadow, False), legacy)
-        self.assertIs(monitor.select_render_sessions(legacy, shadow, True), shadow)
+        rows = ["a", "b"]
+        self.assertIs(monitor.select_render_sessions(rows), rows)
+
+    def test_no_flag_resolver_remains(self):
+        self.assertFalse(hasattr(monitor, "state_files_mode"))
 
 
 # ---------------------------------------------------------------------------
@@ -2193,6 +2185,75 @@ class Goal19_SessionDisplayName(MonitorTestBase):
         # NAME lives — proving the two maps didn't get merged/confused.
         self.assertIn("dev-tools-2", hostname_to_name.values())
         self.assertNotIn("dev-tools-2", container_info["hostname_to_label"].values())
+
+
+# ---------------------------------------------------------------------------
+# GOAL 20 — The render seam flip (phase 03-01): scan_state_files() is the
+# one engine feeding rendering, its rows carry display_name, and the
+# one-argument select_render_sessions() identity seam replaces the old
+# two-engine selector (D-01, D-08).
+# ---------------------------------------------------------------------------
+
+class Goal20_RenderSeamFlip(StateFileTestBase):
+
+    def test_state_file_row_carries_disambiguated_display_name(self):
+        self._write_state("a", hostname="container-1")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "dev-tools"},
+            container_info={"hostname_to_label": {}, "hostname_to_status": {},
+                             "sessionid_to_hostname": {}},
+            hostname_to_name={"container-1": "dev-tools-2"},
+            legacy_sessions=[],
+        )
+        self.assertEqual(s["display_name"], "dev-tools-2")
+
+    def test_state_file_row_display_name_falls_back_to_name_without_map(self):
+        self._write_state("a", hostname="container-1")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "dev-tools"}, legacy_sessions=[],
+            hostname_to_name=None,
+        )
+        self.assertEqual(s["display_name"], s["name"])
+
+    def test_state_file_row_display_name_falls_back_for_unknown_hostname(self):
+        self._write_state("a", hostname="container-1")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "dev-tools"}, legacy_sessions=[],
+            hostname_to_name={"other-host": "dev-tools-9"},
+        )
+        self.assertEqual(s["display_name"], s["name"])
+
+    def test_session_display_text_resolves_disambiguated_name(self):
+        self._write_state("a", hostname="container-1")
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "dev-tools"}, legacy_sessions=[],
+            hostname_to_name={"container-1": "dev-tools-2"},
+        )
+        self.assertEqual(monitor.session_display_text(s), "dev-tools-2")
+        self.assertNotEqual(monitor.session_display_text(s), "dev-tools")
+
+    def test_select_render_sessions_is_a_one_argument_identity_seam(self):
+        rows = [{"k": 1}]
+        self.assertIs(monitor.select_render_sessions(rows), rows)
+
+    def test_empty_state_dir_and_empty_legacy_returns_empty_list_no_raise(self):
+        self.assertEqual(monitor.scan_state_files(legacy_sessions=[]), [])
+
+    def test_absent_state_dir_and_empty_legacy_returns_empty_list_no_raise(self):
+        monitor.STATE_DIR = self.root / "does-not-exist"
+        self.assertEqual(monitor.scan_state_files(legacy_sessions=[]), [])
+
+    def test_equal_sort_keys_keep_input_order_stable(self):
+        self._write_state("b")
+        self._write_state("a")
+        mtime = time.time()
+        os.utime(self.root / "a.json", (mtime, mtime))
+        os.utime(self.root / "b.json", (mtime, mtime))
+        with mock.patch.object(Path, "glob",
+                                return_value=[self.root / "b.json", self.root / "a.json"]):
+            sessions = monitor.scan_state_files(
+                sessionid_to_label={"a": "L", "b": "L"}, legacy_sessions=[])
+        self.assertEqual([s["session_id"] for s in sessions], ["b", "a"])
 
 
 if __name__ == "__main__":

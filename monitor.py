@@ -1,14 +1,13 @@
 """Claude Code session monitor — always-on-top overlay for Windows.
 
-Phase 2 (state-writer-shadow-mode): a second, hook-derived verdict engine
-(scan_state_files()) runs alongside the legacy jsonl-parsing engine (scan())
-on every tick, and disagreements between them are logged to DIVERGENCE_LOG
-for later review — but during normal operation the overlay, notifications
-and Telegram push are still driven exclusively by the legacy engine (D-01).
-Launch with `--state-files` (see state_files_mode()) to render and notify
-from the state-file engine instead, for hands-on verification of the new
-engine including its notification behaviour; without the flag, this file
-behaves exactly as it did before Phase 2.
+Phase 3 (flip-to-default): the hook-derived verdict engine
+(scan_state_files()) is the default and only source the overlay, toasts,
+sound, taskbar flash and Telegram push are driven from — reached through
+select_render_sessions(), the single seam through which its output reaches
+rendering. `--state-files` is accepted on the command line but ignored: it
+is retained-but-inert so existing launch shortcuts keep working, not a
+mode selector. Shadow-mode double-computation and divergence logging
+(D-08) are gone.
 """
 from __future__ import annotations
 
@@ -69,13 +68,12 @@ AUQ_LOCK_MAX_AGE_SEC = 3600
 # + installer.
 WORKING_LOCK_DIR = Path.home() / ".claude" / "working-locks"
 WORKING_LOCK_MAX_AGE_SEC = 3600
-# Phase 2 state-writer engine (shadow mode): one small JSON verdict file per
-# session_id, written atomically by hooks/state-writer.sh on lifecycle
-# events. Module-level so tests can repoint them the way they already
-# repoint PROJECTS_DIR/AUQ_LOCK_DIR. See scan_state_files() below and
-# .planning/phases/02-state-writer-shadow-mode/ for the design — this engine
-# is shadow-only during Phase 2 (D-01): its output never reaches rendering
-# or notification directly, see select_render_sessions().
+# The state-writer engine: one small JSON verdict file per session_id,
+# written atomically by hooks/state-writer.sh on lifecycle events.
+# Module-level so tests can repoint them the way they already repoint
+# PROJECTS_DIR/AUQ_LOCK_DIR. See scan_state_files() below — this engine is
+# the primary source rendering and notification are driven from (D-01),
+# reached through select_render_sessions().
 STATE_DIR = Path.home() / ".claude" / "monitor-state"
 DIVERGENCE_LOG = Path.home() / ".claude" / "monitor-divergence.log"
 # Size guard for DIVERGENCE_LOG, mirroring the 5MB threshold
@@ -488,10 +486,10 @@ def derive_alias_key(hostname: str | None, fallback_key: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 state-writer engine (shadow mode) — reads ~/.claude/monitor-state/
-# (hooks/state-writer.sh's output) as a second, independent verdict source.
-# NEVER reaches rendering/notification directly during Phase 2 (D-01); see
-# select_render_sessions(), the single seam that enforces this structurally.
+# The state-writer engine — reads ~/.claude/monitor-state/ (hooks/state-
+# writer.sh's output) as the primary verdict source rendering and
+# notification are driven from (D-01); see select_render_sessions(), the
+# single seam that carries its output to rendering.
 # ---------------------------------------------------------------------------
 
 def _read_state_file(path: Path) -> dict | None:
@@ -575,7 +573,8 @@ def _state_record_age(obj: dict, mtime: float, now: float) -> float:
 def scan_state_files(label_map: dict[str, str] | None = None,
                       sessionid_to_label: dict[str, str] | None = None,
                       container_info: dict | None = None,
-                      legacy_sessions: list[dict] | None = None) -> list[dict]:
+                      legacy_sessions: list[dict] | None = None,
+                      hostname_to_name: dict[str, str] | None = None) -> list[dict]:
     """Shadow-mode sibling of scan(): derives one verdict per session from
     ~/.claude/monitor-state/*.json (written atomically by
     hooks/state-writer.sh) instead of parsing any jsonl.
@@ -592,6 +591,13 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     which cannot reach a paused container; without it a paused session's
     label would be unresolved and it would vanish from the shadow list,
     making the paused-stays-WORKING staleness branch below unreachable.
+
+    `hostname_to_name` (scan_containers()'s fifth return element, the same
+    map scan() already takes) resolves each row's `display_name` via
+    session_display_name() — the single place the duplicate-container
+    disambiguation rule lives (container_display_name()). Every row this
+    function returns carries `display_name`; rows carried through the
+    legacy bridge already have it from scan() and are left untouched.
 
     `container_info` (scan_containers()'s fourth return element) also gates
     a stale WORKING verdict: past STATE_HEARTBEAT_STALE_SEC (or the shorter
@@ -696,6 +702,7 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 "hostname": obj.get("hostname"),
                 "background_tasks_count": bg_count,
                 "alias_key": derive_alias_key(hostname, session_id),
+                "display_name": session_display_name(name, hostname, hostname_to_name),
             })
 
     if legacy_sessions is None:
@@ -881,42 +888,23 @@ def write_divergences(records: list[dict]) -> None:
         pass
 
 
-def select_render_sessions(legacy: list[dict], shadow: list[dict],
-                            state_files_mode: bool) -> list[dict]:
-    """The single seam through which either engine's output can reach
-    rendering or notification. Returns the legacy list *object* itself
-    (identity, not a copy) when state_files_mode is False — this is what
-    makes D-01 ("zero UX change during Phase 2") structurally enforceable
-    rather than just a promise never to wire the shadow engine into the UI.
+def select_render_sessions(sessions: list[dict]) -> list[dict]:
+    """The single seam through which the engine's output reaches rendering
+    or notification. Now a one-argument identity seam — returns the same
+    list *object* it was given, unchanged — kept as a named function rather
+    than inlined at the call site so it remains the one documented point
+    D-08 requires: a future second engine (or diagnostic mode) has exactly
+    one place to plug into rendering, instead of every call site needing
+    its own selection logic.
+
+    `--state-files` is retained-but-inert (RESEARCH.md Open Question 2):
+    the flag no longer selects between two engines — there is only one —
+    so existing `monitor.bat` shortcuts that still pass it keep working
+    without a `--legacy` escape hatch. There is deliberately no argv
+    handling here or anywhere else for the flag: this codebase has no
+    argparse, so an unrecognised argument is already inert by construction.
     """
-    return shadow if state_files_mode else legacy
-
-
-def state_files_mode(argv: list[str] | None = None) -> bool:
-    """Whether monitor.py was launched with the `--state-files` diagnostic
-    flag (ENG-01), read directly from argv the same way `--test-notify`
-    already is — this codebase deliberately has no argparse. Kept behind a
-    function, not inlined at the call site, so it is unit-testable without
-    constructing the tkinter-backed MonitorApp; defaults to `sys.argv` so
-    normal callers don't have to pass anything.
-
-    Without the flag, every path the overlay drives — the overlay itself,
-    toasts, audio, the taskbar flash and the Telegram push — is driven by
-    the legacy list exactly as it is today (D-01). With the flag, those
-    same paths are driven by the state-file engine instead, so the new
-    engine (including its notification behaviour) can be verified by eye.
-    The shadow comparison (diff_verdicts/write_divergences) always runs
-    every tick regardless of this flag — it's a pure rendering choice made
-    once through select_render_sessions(), not a scan-time one.
-
-    Operational note: the monitor is a process-wide singleton (see
-    SINGLETON_PORT above), so a normal monitor instance has to be closed
-    before starting a `--state-files` diagnostic run — a second instance
-    started with the flag while the first is running exits silently.
-    """
-    if argv is None:
-        argv = sys.argv
-    return "--state-files" in argv
+    return sessions
 
 
 def scan(label_map: dict[str, str] | None = None,
@@ -1141,11 +1129,9 @@ def session_display_name(label: str, hostname: str | None,
 def session_display_text(s: dict) -> str:
     """Read side for the three places that draw a session's name.
 
-    Prefers `display_name` (set by `scan()` via `session_display_name`) and
-    falls back to `name` — and then to "" — so rows produced by the frozen
-    state-file engine (`scan_state_files`, which carries no `display_name`
-    field) render exactly as they do today, with no edit to that frozen
-    function.
+    Prefers `display_name` (set by both `scan()` and `scan_state_files()`
+    via `session_display_name()`) and falls back to `name` — and then to
+    "" — for any row a future producer forgets to stamp.
     """
     return s.get("display_name") or s.get("name") or ""
 
@@ -1446,11 +1432,6 @@ class MonitorApp:
         # duplicate-project container the same way the docker row does.
         self._cached_hostname_to_name: dict[str, str] = {}
         self._docker_query_inflight = False
-        # Phase 2 shadow engine (D-01/ENG-01): read once at startup from the
-        # `--state-files` CLI flag via state_files_mode() below. False keeps
-        # select_render_sessions() returning the legacy list unconditionally
-        # — the default run's behaviour is unchanged from before this phase.
-        self.state_files_mode = state_files_mode()
         # Phase 2 shadow engine (ENG-02): per-key episode state carried
         # across ticks for filter_divergence_events(), so a persisting
         # disagreement collapses to one `diverged` line and one `resolved`
@@ -2107,28 +2088,26 @@ class MonitorApp:
         except Exception:
             sessions = []
 
-        # Phase 2 shadow engine (D-01: shadow-only, never rendered directly
-        # during default operation). One bad shadow tick must never break
-        # the loop — same defensive wrapping as the legacy scan() call
-        # above.
+        # The primary engine (D-01: hook-derived state is what renders and
+        # notifies). One bad tick must never break the loop — same
+        # defensive wrapping as the legacy scan() call above. scan()'s
+        # `sessions` result still feeds this call (legacy_sessions=, the
+        # D-02c hookless bridge) and, in plan 03-02, the jsonl-advance
+        # signal and working-lock pin evidence — it is not dead code.
         try:
-            shadow_sessions = scan_state_files(
+            render_sessions = scan_state_files(
                 self._cached_label_map, self._sessionid_to_label,
                 container_info=self._cached_container_info,
                 legacy_sessions=sessions,
+                hostname_to_name=self._cached_hostname_to_name,
             )
         except Exception:
-            shadow_sessions = []
-        divergence_tick = time.time()
-        diverge_records = diff_verdicts(sessions, shadow_sessions, divergence_tick)
-        diverge_events, self._divergence_state = filter_divergence_events(
-            diverge_records, self._divergence_state, divergence_tick)
-        write_divergences(diverge_events)
-        # The single seam through which either engine's output can reach
-        # rendering/notification — select_render_sessions(..., False) always
-        # returns the legacy `sessions` list object itself (identity), which
-        # is what makes D-01 structurally enforceable rather than a promise.
-        render_sessions = select_render_sessions(sessions, shadow_sessions, self.state_files_mode)
+            render_sessions = []
+        # The single seam through which the engine's output reaches
+        # rendering/notification — returns render_sessions unchanged
+        # (identity), the one documented point D-08 requires a future
+        # producer to plug into.
+        render_sessions = select_render_sessions(render_sessions)
 
         # Rebuild the row-key -> alias-key map from what's about to render,
         # before the prune / transitions / rendering below read it. A row
@@ -2143,7 +2122,7 @@ class MonitorApp:
         # result can't wipe every label the user set.
         self._prune_aliases(render_sessions)
 
-        count_txt = f"{len(containers)}d · {len(sessions)}s"
+        count_txt = f"{len(containers)}d · {len(render_sessions)}s"
         if self.count_lbl.cget("text") != count_txt:
             self.count_lbl.config(text=count_txt)
 
