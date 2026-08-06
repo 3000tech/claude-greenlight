@@ -140,7 +140,7 @@ class _HomeTestCase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class Goal1_TracerEndToEnd(_HomeTestCase):
-    def test_stop_event_becomes_shadow_waiting_verdict_with_divergence(self):
+    def test_stop_event_becomes_rendered_waiting_verdict(self):
         sid = "tracer-1"
 
         # 1. The real hook script writes a complete state file.
@@ -156,36 +156,22 @@ class Goal1_TracerEndToEnd(_HomeTestCase):
             self.assertIn(key, obj, f"missing field {key!r} in state file")
 
         # 2. monitor.scan_state_files() derives a WAITING verdict from it,
-        # legacy's exact WAITING colour, without touching any jsonl.
+        # legacy's exact WAITING colour, without touching any jsonl — and
+        # that verdict is what select_render_sessions() renders (D-01/D-08:
+        # the state-file engine is the one rendered source; there is no
+        # second engine left to disagree with it).
         orig_state_dir = monitor.STATE_DIR
         monitor.STATE_DIR = _state_dir(self.home)
         try:
-            shadow = monitor.scan_state_files(sessionid_to_label={sid: "my-label"})
+            rendered = monitor.scan_state_files(sessionid_to_label={sid: "my-label"})
         finally:
             monitor.STATE_DIR = orig_state_dir
 
-        self.assertEqual(len(shadow), 1)
-        self.assertEqual(shadow[0]["status"], "WAITING")
-        self.assertEqual(shadow[0]["dot_color"], "#4ade80")
-        self.assertEqual(shadow[0]["key"], sid)
-
-        # 3. diff_verdicts() emits exactly one record on disagreement.
-        legacy_disagreeing = [{
-            "key": sid, "session_id": sid, "name": "my-label", "status": "WORKING",
-        }]
-        records = monitor.diff_verdicts(legacy_disagreeing, shadow, 1785333758.0)
-        self.assertEqual(len(records), 1)
-        rec = records[0]
-        self.assertEqual(rec["legacy_verdict"], "WORKING")
-        self.assertEqual(rec["state_file_verdict"], "WAITING")
-        self.assertEqual(rec["last_event"], "Stop")
-        self.assertEqual(rec["key"], sid)
-
-        # 4. ...and zero records when both sides agree.
-        legacy_agreeing = [{
-            "key": sid, "session_id": sid, "name": "my-label", "status": "WAITING",
-        }]
-        self.assertEqual(monitor.diff_verdicts(legacy_agreeing, shadow, 1785333758.0), [])
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["status"], "WAITING")
+        self.assertEqual(rendered[0]["dot_color"], "#4ade80")
+        self.assertEqual(rendered[0]["key"], sid)
+        self.assertIs(monitor.select_render_sessions(rendered), rendered)
 
 
 # ---------------------------------------------------------------------------

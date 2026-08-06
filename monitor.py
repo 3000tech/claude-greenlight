@@ -1,13 +1,14 @@
 """Claude Code session monitor — always-on-top overlay for Windows.
 
-Phase 3 (flip-to-default): the hook-derived verdict engine
-(scan_state_files()) is the default and only source the overlay, toasts,
-sound, taskbar flash and Telegram push are driven from — reached through
-select_render_sessions(), the single seam through which its output reaches
-rendering. `--state-files` is accepted on the command line but ignored: it
-is retained-but-inert so existing launch shortcuts keep working, not a
-mode selector. Shadow-mode double-computation and divergence logging
-(D-08) are gone.
+One hook-driven state engine (scan_state_files(), reading
+~/.claude/monitor-state/*.json written by hooks/state-writer.sh) drives the
+overlay, toasts, sound, taskbar flash and Telegram push, via
+select_render_sessions() — the single seam through which its output
+reaches rendering. The legacy jsonl scan (scan()) is retained only as a
+data source for three named hybrid fallbacks (the hookless-container
+bridge now, interrupt-recovery + hook-silence pins in plan 03-02), never
+as a second rendered verdict. `--state-files` is accepted but ignored —
+retained-but-inert so existing launch shortcuts keep working.
 """
 from __future__ import annotations
 
@@ -75,11 +76,6 @@ WORKING_LOCK_MAX_AGE_SEC = 3600
 # the primary source rendering and notification are driven from (D-01),
 # reached through select_render_sessions().
 STATE_DIR = Path.home() / ".claude" / "monitor-state"
-DIVERGENCE_LOG = Path.home() / ".claude" / "monitor-divergence.log"
-# Size guard for DIVERGENCE_LOG, mirroring the 5MB threshold
-# hooks/event-logger.sh already established for hook-events.log on the same
-# shared 9p mount (T-02-18). See write_divergences() below.
-DIVERGENCE_LOG_MAX_BYTES = 5 * 1024 * 1024
 # A WORKING verdict whose heartbeat (record ts_ms) has gone silent this long
 # is treated as stale — the same "~10 min heartbeat silence" staleness
 # design D-06 keeps at today's behaviour, now driven by the state file
@@ -275,22 +271,6 @@ def tail_last_line(path: Path) -> str | None:
             return lines[-1].decode("utf-8", errors="replace")
     except OSError:
         return None
-
-
-def project_name(encoded: str, label_map: dict[str, str] | None = None) -> str:
-    # dir names like "c--Users-you-Documents-projects-my-app"
-    # If a running container's workdir matches, use its launcher label instead.
-    if label_map and encoded in label_map:
-        return label_map[encoded]
-    # If the encoded dir ends with a known launcher label (e.g. a Windows path
-    # "C--Users-...-dev-tools"), prefer that over the raw last segment.
-    order = launcher_order()
-    if order:
-        for label in sorted(order, key=len, reverse=True):
-            if encoded.endswith("-" + label) or encoded == label:
-                return label
-    parts = [p for p in encoded.split("-") if p]
-    return parts[-1] if parts else encoded
 
 
 def _workdir_to_encoded(workdir: str) -> str:
@@ -530,8 +510,8 @@ def _state_to_status(state: str | None) -> tuple[str, str, str, int]:
     return "WAITING", "●", "#4ade80", 1
 
 
-# Compact per-event labels for the shadow list's `action` column — the
-# diagnostic-mode equivalent of legacy's parse_last_action() jsonl-tail
+# Compact per-event labels for the state-file list's `action` column — the
+# state-file-engine equivalent of legacy's parse_last_action() jsonl-tail
 # label, derived from the state file's own last_event instead.
 _STATE_ACTION_LABELS = {
     "SessionStart": "session start",
@@ -575,13 +555,12 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                       container_info: dict | None = None,
                       legacy_sessions: list[dict] | None = None,
                       hostname_to_name: dict[str, str] | None = None) -> list[dict]:
-    """Shadow-mode sibling of scan(): derives one verdict per session from
+    """The primary verdict engine: derives one verdict per session from
     ~/.claude/monitor-state/*.json (written atomically by
     hooks/state-writer.sh) instead of parsing any jsonl.
 
-    Mirrors scan()'s session-dict shape (same keys legacy emits, so the
-    divergence comparator can pair the two lists by `key`) plus shadow-only
-    extras (`state`, `last_event`, `hostname`, `background_tasks_count`).
+    Mirrors scan()'s session-dict shape (same keys legacy emits) plus its
+    own extras (`state`, `last_event`, `hostname`, `background_tasks_count`).
     `label_map` is accepted for signature parity with scan() (D-05 requires
     reproducing today's labels); state files always carry a real
     session_id (the filename stem), so `sessionid_to_label` and, as a
@@ -589,15 +568,12 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     consulted here — the hostname fallback matters because
     `sessionid_to_label` is built via `docker exec` (query_container_sessionids),
     which cannot reach a paused container; without it a paused session's
-    label would be unresolved and it would vanish from the shadow list,
+    label would be unresolved and it would vanish from the rendered list,
     making the paused-stays-WORKING staleness branch below unreachable.
 
-    `hostname_to_name` (scan_containers()'s fifth return element, the same
-    map scan() already takes) resolves each row's `display_name` via
-    session_display_name() — the single place the duplicate-container
-    disambiguation rule lives (container_display_name()). Every row this
-    function returns carries `display_name`; rows carried through the
-    legacy bridge already have it from scan() and are left untouched.
+    `hostname_to_name` (scan_containers()'s fifth return element) resolves
+    each row's `display_name` via session_display_name(); rows carried
+    through the legacy bridge already have it from scan().
 
     `container_info` (scan_containers()'s fourth return element) also gates
     a stale WORKING verdict: past STATE_HEARTBEAT_STALE_SEC (or the shorter
@@ -622,16 +598,15 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     killed container — well after MAX_AGE_SEC has already hidden it
     (STATE_PRUNE_AGE_SEC, 24h, is 24x the one-hour visibility window).
 
-    `legacy_sessions` (ENG-05's migration bridge, TEST-MATRIX case 21): once
-    the state-file-derived list above is built, every session `refresh()`'s
-    already-computed legacy `scan()` saw but that has no state file — a
-    container running an image without the hooks installed, by definition —
-    is carried through unchanged, tagged with a shadow-only `legacy_origin`
-    marker so divergence review can tell a genuine state-file verdict apart
-    from a session simply copied across. When `legacy_sessions` is None,
+    `legacy_sessions` (ENG-05's migration bridge, D-02c, TEST-MATRIX case
+    21): every session `refresh()`'s already-computed legacy `scan()` saw
+    but that has no state file — a hookless container, by definition — is
+    carried through unchanged, tagged `legacy_origin`. This is a permanent
+    v1 behaviour, not a diagnostic tag: it is how a hookless container
+    stays visible at all post-flip. When `legacy_sessions` is None,
     `scan(label_map, sessionid_to_label)` runs internally instead, so a
-    standalone caller (the `--state-files` diagnostic mode) still sees the
-    complete picture without a second full jsonl scan every tick.
+    standalone caller still sees the complete picture without a second
+    full jsonl scan every tick.
     """
     sessions: list[dict] = []
     if STATE_DIR.is_dir():
@@ -721,188 +696,18 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     return sessions
 
 
-def diff_verdicts(legacy: list[dict], shadow: list[dict], tick: float) -> list[dict]:
-    """Pure comparison, no I/O. Emits one record per session `key` whose
-    legacy and shadow `status` disagree, compared over the UNION of both
-    engines' keys — not the intersection — because a session one engine
-    sees and the other does not is itself one of the most informative
-    divergences there is (a paused container the shadow engine keeps and
-    legacy drops, or a session one engine picks up a tick earlier). The
-    missing side's verdict is represented as the string "ABSENT". Two lists
-    that agree completely, and two empty lists, both yield an empty list.
-    Records are sorted by `key` so the divergence log reads stable and
-    diffable across ticks.
-
-    Field shape carries everything D-04 requires to judge which side was
-    right during review: both verdicts, the state-file engine's context
-    (`state`, `last_event`, `hostname`, `background_tasks_count`, `age_sec`)
-    and a compact `legacy_evidence` string assembled only from safe,
-    non-content legacy signals — the tool-name-only `action` label, the two
-    lock booleans, the `bg`/`monitors`/`agents` counts and the age — never
-    prompt text, tool input or tool output (T-02-17). No field here
-    classifies which side was correct: D-04 keeps that judgment in the
-    review conversation, not in code that could quietly steer it.
-    """
-    legacy_by_key = {s["key"]: s for s in legacy}
-    shadow_by_key = {s["key"]: s for s in shadow}
-    records: list[dict] = []
-    for key in set(legacy_by_key) | set(shadow_by_key):
-        l = legacy_by_key.get(key)
-        s = shadow_by_key.get(key)
-        legacy_status = l["status"] if l else None
-        shadow_status = s["status"] if s else None
-        if legacy_status == shadow_status:
-            continue
-        ref = l or s
-        if l is None:
-            legacy_evidence = "ABSENT"
-        else:
-            legacy_evidence = (
-                f"action={l.get('action', '')} "
-                f"working_locked={l.get('working_locked', False)} "
-                f"auq_locked={l.get('auq_locked', False)} "
-                f"bg={l.get('bg', False)} "
-                f"monitors={l.get('monitors', 0)} "
-                f"agents={l.get('agents', 0)} "
-                f"age={l.get('age', 0):.0f}s"
-            )
-        records.append({
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tick)),
-            "ts_ms": int(tick * 1000),
-            "tick": tick,
-            "key": key,
-            "session_id": ref.get("session_id"),
-            "name": ref.get("name"),
-            "legacy_verdict": legacy_status if l is not None else "ABSENT",
-            "state_file_verdict": shadow_status if s is not None else "ABSENT",
-            "state": s.get("state") if s else None,
-            "last_event": s.get("last_event") if s else None,
-            "hostname": s.get("hostname") if s else None,
-            "background_tasks_count": s.get("background_tasks_count") if s else None,
-            "age_sec": s.get("age") if s else None,
-            "legacy_evidence": legacy_evidence,
-        })
-    records.sort(key=lambda r: r["key"])
-    return records
-
-
-def filter_divergence_events(records: list[dict], prev: dict[str, dict] | None,
-                              tick: float) -> tuple[list[dict], dict[str, dict]]:
-    """Collapse a persisting disagreement to one `diverged` event when it
-    opens and one `resolved` event when it closes, instead of one identical
-    line every tick (D-02). Pure function — no I/O, no tkinter — so it is
-    testable on its own; the caller (MonitorApp.refresh()) holds `prev` on
-    `self._divergence_state` and threads it through each tick.
-
-    `records` is this tick's diff_verdicts() output. `prev` is the state
-    dict this same function returned last tick, keyed by `key`: each entry
-    is `{"pair": (legacy_verdict, state_file_verdict), "since_ts_ms": ...,
-    "ticks": N}`. A key whose verdict pair is new, or whose pair changed
-    since `prev`, yields a `diverged` event and (re)starts its episode at
-    `ticks=1`. A key present in `prev` but absent from this tick's
-    `records` — because the two engines now agree, or the session vanished
-    while diverging — yields a `resolved` event carrying `since_ts_ms` and
-    the `ticks` the episode lasted. A key whose pair is unchanged
-    contributes no event, only an incremented tick count in the returned
-    state.
-    """
-    prev = dict(prev) if prev else {}
-    next_state: dict[str, dict] = {}
-    events: list[dict] = []
-    current_keys: set[str] = set()
-    for r in records:
-        key = r["key"]
-        current_keys.add(key)
-        pair = (r["legacy_verdict"], r["state_file_verdict"])
-        prev_entry = prev.get(key)
-        if prev_entry is None or prev_entry["pair"] != pair:
-            since_ts_ms = r["ts_ms"]
-            ticks = 1
-            event = dict(r)
-            event["event"] = "diverged"
-            event["since_ts_ms"] = since_ts_ms
-            event["ticks"] = ticks
-            events.append(event)
-            next_state[key] = {"pair": pair, "since_ts_ms": since_ts_ms, "ticks": ticks}
-        else:
-            next_state[key] = {
-                "pair": pair,
-                "since_ts_ms": prev_entry["since_ts_ms"],
-                "ticks": prev_entry["ticks"] + 1,
-            }
-    for key, entry in prev.items():
-        if key in current_keys:
-            continue
-        events.append({
-            "event": "resolved",
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tick)),
-            "ts_ms": int(tick * 1000),
-            "tick": tick,
-            "key": key,
-            "since_ts_ms": entry["since_ts_ms"],
-            "ticks": entry["ticks"],
-        })
-    events.sort(key=lambda e: e["key"])
-    return events, next_state
-
-
-def write_divergences(records: list[dict]) -> None:
-    """Append one JSON line per divergence event to DIVERGENCE_LOG.
-
-    Size-guarded at DIVERGENCE_LOG_MAX_BYTES (mirrors the 5MB threshold
-    hooks/event-logger.sh already uses for hook-events.log on the same
-    shared 9p mount, T-02-18): a file already over the threshold is
-    truncated and an explicit marker record is written first, so a reader
-    can never mistake a truncation for a gap in observation (T-02-21). No
-    flock is needed or added here, unlike hook-events.log — the monitor
-    holds its own process-wide singleton lock (SINGLETON_PORT), so this log
-    has exactly one writer.
-
-    Wrapped so an OSError on the shared mount can never interrupt a tick —
-    same "a log write must never break the loop" discipline
-    hooks/event-logger.sh already established for hook-events.log (T-02-19).
-    """
-    if not records:
-        return
-    try:
-        DIVERGENCE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            size = DIVERGENCE_LOG.stat().st_size
-        except OSError:
-            size = 0
-        truncated = size > DIVERGENCE_LOG_MAX_BYTES
-        with DIVERGENCE_LOG.open("w" if truncated else "a", encoding="utf-8") as f:
-            if truncated:
-                marker = {
-                    "event": "_truncated",
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time())),
-                    "note": (
-                        f"monitor-divergence.log exceeded {DIVERGENCE_LOG_MAX_BYTES} "
-                        "bytes and was truncated before this line"
-                    ),
-                }
-                f.write(json.dumps(marker) + "\n")
-            for r in records:
-                f.write(json.dumps(r) + "\n")
-    except OSError:
-        pass
-
-
 def select_render_sessions(sessions: list[dict]) -> list[dict]:
     """The single seam through which the engine's output reaches rendering
-    or notification. Now a one-argument identity seam — returns the same
-    list *object* it was given, unchanged — kept as a named function rather
-    than inlined at the call site so it remains the one documented point
-    D-08 requires: a future second engine (or diagnostic mode) has exactly
-    one place to plug into rendering, instead of every call site needing
-    its own selection logic.
+    or notification — a one-argument identity seam (D-08): returns the same
+    list *object* it was given, unchanged. Kept as a named function, not
+    inlined, so a future producer has exactly one documented place to plug
+    into rendering.
 
-    `--state-files` is retained-but-inert (RESEARCH.md Open Question 2):
-    the flag no longer selects between two engines — there is only one —
-    so existing `monitor.bat` shortcuts that still pass it keep working
-    without a `--legacy` escape hatch. There is deliberately no argv
-    handling here or anywhere else for the flag: this codebase has no
-    argparse, so an unrecognised argument is already inert by construction.
+    `--state-files` is retained-but-inert (RESEARCH.md Open Question 2): it
+    no longer selects between two engines — there is only one — so existing
+    `monitor.bat` shortcuts keep working without a `--legacy` escape hatch.
+    No argv handling exists for it anywhere: this codebase has no argparse,
+    so an unrecognised argument is already inert by construction.
     """
     return sessions
 
@@ -1055,10 +860,10 @@ def scan(label_map: dict[str, str] | None = None,
             "age": age,
             "mtime": latest_mtime,
             "action": parse_last_action(last_line),
-            # Phase 2 shadow engine (ENG-02): both locks were already computed
-            # above for the legacy status decision — reported here too so
-            # diff_verdicts() can assemble legacy_evidence without a second
-            # lock-file stat.
+            # Both locks were already computed above for the legacy status
+            # decision — reported here too since a hookless-container row
+            # carried through scan_state_files()'s legacy bridge (D-02c)
+            # needs them, same as any consumer reading a legacy row.
             "auq_locked": auq_locked,
             "working_locked": working_locked,
         })
@@ -1142,7 +947,7 @@ def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict,
     Returns (rows, label_map, sessionid_to_label, container_info,
     hostname_to_name): `label_map` maps encoded session-dir names (as they
     appear under ~/.claude/projects/) to the container's launcher label;
-    `container_info` is the Phase 2 state-file engine's container-identity/
+    `container_info` is the state-file engine's container-identity/
     liveness cross-check (D-05, ENG-03) — {"hostname_to_label": ...,
     "hostname_to_status": ..., "sessionid_to_hostname": ...}, keyed by the
     container hostname the state writer captures at write time, built from
@@ -1419,8 +1224,8 @@ class MonitorApp:
         self._cached_containers: list[dict] = []
         self._cached_label_map: dict[str, str] = {}
         self._sessionid_to_label: dict[str, str] = {}
-        # Phase 2 shadow engine (ENG-03): hostname_to_label/hostname_to_status
-        # from scan_containers()'s fourth return element, feeding
+        # ENG-03: hostname_to_label/hostname_to_status from
+        # scan_containers()'s fourth return element, feeding
         # scan_state_files()'s staleness gate and paused-container label
         # fallback. Empty maps until the first docker tick completes.
         self._cached_container_info: dict = {
@@ -1432,11 +1237,6 @@ class MonitorApp:
         # duplicate-project container the same way the docker row does.
         self._cached_hostname_to_name: dict[str, str] = {}
         self._docker_query_inflight = False
-        # Phase 2 shadow engine (ENG-02): per-key episode state carried
-        # across ticks for filter_divergence_events(), so a persisting
-        # disagreement collapses to one `diverged` line and one `resolved`
-        # line instead of one identical line every REFRESH_MS.
-        self._divergence_state: dict[str, dict] = {}
 
         # drag support via header
         self.header.bind("<Button-1>", self._start_drag)
