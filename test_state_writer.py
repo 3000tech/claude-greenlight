@@ -830,6 +830,71 @@ class Goal9_AuqLockRetired(_HomeTestCase):
         backups = list((self.home / ".claude").glob("settings.json.bak.*"))
         self.assertEqual(len(backups), 1, backups)
 
+    def test_plain_install_sweeps_stale_auq_lock_entries_from_a_pre_flip_install(self):
+        """WR-02: the documented upgrade command (`bash hooks/install.sh`,
+        no flag) must, on its own, clean a pre-flip install's stale
+        auq-lock.sh registrations across every event array it touched
+        (PreToolUse/PostToolUse/Notification/Stop) — not just the ones
+        --remove-auq-lock users know to run separately. Reuses the same
+        settings.json shape as
+        test_remove_auq_lock_strips_only_retired_entries_leaving_working_lock_intact,
+        including the co-located Stop entry (auq-lock clear + working-lock
+        clear sharing one hooks array), so a command-level (not entry-level)
+        filter is required to pass."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "AskUserQuestion",
+                     "hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" set',
+                                "timeout": 2}]},
+                    {"hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/working-lock.sh" set',
+                                "timeout": 2}]},
+                ],
+                "PostToolUse": [
+                    {"matcher": "AskUserQuestion",
+                     "hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" clear',
+                                "timeout": 2}]},
+                ],
+                "Notification": [
+                    {"hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" set',
+                                "timeout": 2}]},
+                ],
+                "Stop": [
+                    {"hooks": [
+                        {"type": "command",
+                         "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" clear',
+                         "timeout": 2},
+                        {"type": "command",
+                         "command": 'bash "$HOME/.claude/hooks/working-lock.sh" clear',
+                         "timeout": 2},
+                    ]},
+                ],
+            }
+        }
+        _settings_path(self.home).parent.mkdir(parents=True, exist_ok=True)
+        _settings_path(self.home).write_text(json.dumps(settings), encoding="utf-8")
+
+        # No --remove-auq-lock flag: this is the plain upgrade command from
+        # README step 4.
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        merged = _load_settings(self.home)
+        self.assertEqual(_commands_matching(merged, AUQ_LOCK_PATTERN), [])
+        # working-lock.sh survives, including the one that was co-located
+        # with an auq-lock.sh command in the same Stop entry.
+        self.assertGreater(len(_commands_matching(merged, LOCK_PATTERN)), 0)
+        # PostToolUse/Notification are legitimately repopulated by the
+        # later event-logger.sh/state-writer.sh registration passes (both
+        # events are in their respective event lists) — the assertion above
+        # (no auq-lock.sh commands anywhere) is what WR-02 requires, not
+        # that these arrays stay empty.
+        self.assertNotEqual(_commands_matching(merged, EVENT_LOGGER_PATTERN), [])
+
     def test_remove_auq_lock_on_missing_settings_exits_zero(self):
         result = _run_install(self.home, "--remove-auq-lock")
         self.assertEqual(result.returncode, 0, result.stderr)

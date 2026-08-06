@@ -145,20 +145,38 @@ else
   # Drop any entries we may have added on a previous install, then append the
   # canonical set from the snippet. The matcher-less lock entries (PreToolUse/
   # Stop/UserPromptSubmit) are matched on a hook command referencing the lock
-  # script, so re-running never duplicates them. The default path no longer
-  # touches PostToolUse or Notification at all — those arrays existed solely
-  # to register the now-retired auq-lock.sh; an existing install's stale
-  # entries there are the explicit `--remove-auq-lock` teardown's job, not
-  # this merge's. The Stop array still pipes through drop_auq so a re-run
-  # keeps stripping auq-lock.sh's stale Stop-clear entry even though the
-  # snippet no longer supplies a replacement for it.
+  # script, so re-running never duplicates them. The Stop array also pipes
+  # through drop_auq so a re-run keeps stripping auq-lock.sh's stale
+  # Stop-clear entry even though the snippet no longer supplies a
+  # replacement for it.
+  #
+  # WR-02: after the merge above, sweep EVERY event array (not just the
+  # three the merge touches) for stale auq-lock.sh command entries — the
+  # exact same command-level filter --remove-auq-lock uses (strip the
+  # matching COMMAND, not the whole entry, since a pre-flip install can
+  # co-locate an auq-lock.sh command alongside a still-live working-lock.sh
+  # command in the same entry object; see the PreToolUse/Stop fixtures in
+  # test_state_writer.py's Goal9_AuqLockRetired). This folds
+  # --remove-auq-lock's cleanup into the default install path so that
+  # running the documented upgrade command (`bash hooks/install.sh`,
+  # README step 4) alone is enough to clean a pre-flip install's
+  # PreToolUse/PostToolUse/Notification/Stop auq-lock.sh registrations —
+  # the separate `--remove-auq-lock` flag remains available but is no
+  # longer required for this. Idempotent on a fresh install: an
+  # install.sh-produced settings.json never has an auq-lock.sh command
+  # anywhere in the first place.
   jq --slurpfile snip "$SNIPPET" '
     def has_cmd($re): [.hooks[]?.command] | any(. // "" | test($re));
     def drop_working: map(select(has_cmd("working-lock\\.sh") | not));
     def drop_auq:     map(select(has_cmd("auq-lock\\.sh")     | not));
+    def is_auq_lock_cmd: (.command // "" | test("auq-lock\\.sh"));
+    def sweep_auq_cmd:
+      map(.hooks |= (map(select(is_auq_lock_cmd | not))))
+      | map(select((.hooks // []) | length > 0));
     .hooks.PreToolUse       = ((.hooks.PreToolUse       // []) | drop_working) + ($snip[0].hooks.PreToolUse       // []) |
     .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) | drop_working) + ($snip[0].hooks.UserPromptSubmit // []) |
-    .hooks.Stop             = ((.hooks.Stop             // []) | drop_working | drop_auq)                   + ($snip[0].hooks.Stop             // [])
+    .hooks.Stop             = ((.hooks.Stop             // []) | drop_working | drop_auq)                   + ($snip[0].hooks.Stop             // []) |
+    .hooks = ((.hooks // {}) | with_entries(.value |= sweep_auq_cmd))
   ' "$SETTINGS" > "$SETTINGS.tmp"
   python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
   mv "$SETTINGS.tmp" "$SETTINGS"
