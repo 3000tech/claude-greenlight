@@ -24,6 +24,19 @@ set -eu
 mode="${1:-}"
 sid=$(cat | jq -r '.session_id // empty' 2>/dev/null || true)
 [ -z "$sid" ] && exit 0
+
+# Path-traversal guard (T-03-01): sid becomes part of a filesystem path
+# below. Reject anything that isn't a bare filename-safe token before it is
+# used, mirroring hooks/state-writer.sh's identical guard byte-for-byte so
+# the two scripts cannot drift. A rejected payload exits 0 silently — same
+# as every other early-exit path here and in state-writer.sh; a hook must
+# never fail loudly and disrupt the session.
+case "$sid" in
+  *[!A-Za-z0-9._-]*)
+    exit 0
+    ;;
+esac
+
 lock_dir="$HOME/.claude/working-locks"
 mkdir -p "$lock_dir"
 case "$mode" in

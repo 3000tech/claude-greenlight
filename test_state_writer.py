@@ -42,11 +42,11 @@ STATE_WRITER_EVENTS_JSON = HOOKS_DIR / "state-writer-events.json"
 SETTINGS_SNIPPET = HOOKS_DIR / "settings-snippet.json"
 HOOK_EVENTS_JSON = HOOKS_DIR / "hook-events.json"
 WORKING_LOCK_SH = HOOKS_DIR / "working-lock.sh"
-AUQ_LOCK_SH = HOOKS_DIR / "auq-lock.sh"
 
-LOCK_PATTERN = r"working-lock\.sh|auq-lock\.sh"
+LOCK_PATTERN = r"working-lock\.sh"
 STATE_WRITER_PATTERN = r"state-writer\.sh"
 EVENT_LOGGER_PATTERN = r"event-logger\.sh"
+AUQ_LOCK_PATTERN = r"auq-lock\.sh"
 
 
 def setUpModule() -> None:
@@ -70,6 +70,17 @@ def _base_env(home: Path) -> dict:
 def _run_state_writer(payload: str, home: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(STATE_WRITER_SH)],
+        input=payload,
+        env=_base_env(home),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def _run_working_lock(mode: str, payload: str, home: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(WORKING_LOCK_SH), mode],
         input=payload,
         env=_base_env(home),
         capture_output=True,
@@ -676,12 +687,12 @@ class Goal7_RemovalPath(_HomeTestCase):
 
 class Goal8_MigrationNonRegression(_HomeTestCase):
     def _lock_scripts_match_repo(self) -> None:
+        """auq-lock.sh is retired (D-04): the default install path no
+        longer ships it, so only working-lock.sh's on-disk copy is checked
+        here."""
         installed_working = self.home / ".claude" / "hooks" / "working-lock.sh"
-        installed_auq = self.home / ".claude" / "hooks" / "auq-lock.sh"
         self.assertTrue(installed_working.is_file())
-        self.assertTrue(installed_auq.is_file())
         self.assertEqual(installed_working.read_bytes(), WORKING_LOCK_SH.read_bytes())
-        self.assertEqual(installed_auq.read_bytes(), AUQ_LOCK_SH.read_bytes())
 
     def test_lock_counts_unchanged_across_install_reinstall_and_teardown(self):
         snippet_lock_count = len(_commands_matching(
@@ -705,6 +716,130 @@ class Goal8_MigrationNonRegression(_HomeTestCase):
         after_teardown = len(_commands_matching(_load_settings(self.home), LOCK_PATTERN))
         self.assertEqual(after_teardown, snippet_lock_count)
         self._lock_scripts_match_repo()
+
+
+# ---------------------------------------------------------------------------
+# GOAL 9 — D-04: the AskUserQuestion lock hook is retired from the default
+# install path, with a validated teardown mode for installs that already
+# registered it (T-03-10, T-03-12)
+# ---------------------------------------------------------------------------
+
+class Goal9a_WorkingLockSessionIdValidation(_HomeTestCase):
+    """T-03-01: hooks/working-lock.sh backports state-writer.sh's session-id
+    character allowlist ahead of the lock directory creation and the
+    set/clear branch — the same guard, byte-for-byte in shape."""
+
+    def _lock_dir(self) -> Path:
+        return self.home / ".claude" / "working-locks"
+
+    def test_path_traversal_session_id_set_creates_no_file(self):
+        result = _run_working_lock("set", json.dumps({"session_id": "../evil"}), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse((self.home / "evil").exists())
+        if self._lock_dir().exists():
+            self.assertEqual(list(self._lock_dir().iterdir()), [])
+
+    def test_path_traversal_session_id_clear_removes_nothing_outside_lock_dir(self):
+        outside_target = self.home / "evil"
+        outside_target.write_text("do-not-touch", encoding="utf-8")
+        result = _run_working_lock("clear", json.dumps({"session_id": "../evil"}), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(outside_target.exists())
+        self.assertEqual(outside_target.read_text(encoding="utf-8"), "do-not-touch")
+
+    def test_well_formed_session_id_still_sets_and_clears_the_lock(self):
+        sid = "well-formed_1.2"
+        result = _run_working_lock("set", json.dumps({"session_id": sid}), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self._lock_dir() / sid).exists())
+
+        result = _run_working_lock("clear", json.dumps({"session_id": sid}), self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self._lock_dir() / sid).exists())
+
+
+class Goal9_AuqLockRetired(_HomeTestCase):
+    def test_fresh_install_registers_zero_auq_lock_entries(self):
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertEqual(_commands_matching(settings, AUQ_LOCK_PATTERN), [])
+        self.assertFalse((self.home / ".claude" / "hooks" / "auq-lock.sh").exists())
+        self.assertFalse((self.home / ".claude" / "auq-locks").exists())
+
+    def test_fresh_install_still_registers_working_lock_and_state_writer(self):
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = _load_settings(self.home)
+        self.assertGreater(len(_commands_matching(settings, LOCK_PATTERN)), 0)
+        self.assertGreater(len(_commands_matching(settings, STATE_WRITER_PATTERN)), 0)
+        self.assertGreater(len(_commands_matching(settings, EVENT_LOGGER_PATTERN)), 0)
+
+    def test_remove_auq_lock_strips_only_retired_entries_leaving_working_lock_intact(self):
+        """A settings.json shaped like a pre-flip install: the retired
+        hook's Stop-clear command shares one entry object with
+        working-lock.sh's — the teardown must strip the command, not the
+        whole entry, or it silently deletes a still-live guarantee."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "AskUserQuestion",
+                     "hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" set',
+                                "timeout": 2}]},
+                    {"hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/working-lock.sh" set',
+                                "timeout": 2}]},
+                ],
+                "PostToolUse": [
+                    {"matcher": "AskUserQuestion",
+                     "hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" clear',
+                                "timeout": 2}]},
+                ],
+                "Notification": [
+                    {"hooks": [{"type": "command",
+                                "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" set',
+                                "timeout": 2}]},
+                ],
+                "Stop": [
+                    {"hooks": [
+                        {"type": "command",
+                         "command": 'bash "$HOME/.claude/hooks/auq-lock.sh" clear',
+                         "timeout": 2},
+                        {"type": "command",
+                         "command": 'bash "$HOME/.claude/hooks/working-lock.sh" clear',
+                         "timeout": 2},
+                    ]},
+                ],
+            }
+        }
+        _settings_path(self.home).parent.mkdir(parents=True, exist_ok=True)
+        _settings_path(self.home).write_text(json.dumps(settings), encoding="utf-8")
+
+        result = _run_install(self.home, "--remove-auq-lock")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        merged = _load_settings(self.home)
+        self.assertEqual(_commands_matching(merged, AUQ_LOCK_PATTERN), [])
+        working_lock_cmds = _commands_matching(merged, LOCK_PATTERN)
+        self.assertEqual(len(working_lock_cmds), 2, working_lock_cmds)
+        self.assertEqual(merged["hooks"].get("PostToolUse"), [])
+        self.assertEqual(merged["hooks"].get("Notification"), [])
+        backups = list((self.home / ".claude").glob("settings.json.bak.*"))
+        self.assertEqual(len(backups), 1, backups)
+
+    def test_remove_auq_lock_on_missing_settings_exits_zero(self):
+        result = _run_install(self.home, "--remove-auq-lock")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nothing to do", result.stdout)
+
+    def test_unknown_argument_lists_all_valid_modes(self):
+        result = _run_install(self.home, "--nope")
+        self.assertNotEqual(result.returncode, 0)
+        for mode in ("--remove-logger", "--remove-state-writer", "--remove-auq-lock"):
+            self.assertIn(mode, result.stderr)
 
 
 if __name__ == "__main__":
