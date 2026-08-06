@@ -81,7 +81,7 @@ Plans:
   2. `test_monitor.py` covers the state-file engine at equivalent coverage to before, with state-file fixtures replacing jsonl fixtures wherever legacy code was removed.
   3. `hooks/install.sh`, the settings snippet, and the README document the new architecture and hook requirements clearly enough that a new container/user can be onboarded correctly.
 
-**Plans**: 2/4 plans executed
+**Plans**: 3/4 plans executed
 
 Plans:
 **Wave 1**
@@ -94,7 +94,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-03-PLAN.md — Badge-only turn-end at the hook, AskUserQuestion lock retirement with its teardown mode, and FLIP-02 equivalent coverage (FLIP-01, FLIP-02, FLIP-03)
+- [x] 03-03-PLAN.md — Badge-only turn-end at the hook, AskUserQuestion lock retirement with its teardown mode, and FLIP-02 equivalent coverage (FLIP-01, FLIP-02, FLIP-03)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -109,4 +109,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Hook Coverage Verification | 2/2 | Complete    | 2026-07-29 |
 | 2. State Writer & Shadow Mode | 4/5 | In Progress|  |
-| 3. Flip to Default & Cleanup | 2/4 | In Progress|  |
+| 3. Flip to Default & Cleanup | 3/4 | In Progress|  |

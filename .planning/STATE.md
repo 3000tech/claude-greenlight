@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: flip-to-default-cleanup
 status: executing
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-08-06T12:00:21.124Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-08-06T12:19:52.294Z"
 last_activity: 2026-08-06
 last_activity_desc: Phase 3 execution started
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 11
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 ## Current Position
 
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-08-06 — Phase 3 execution started
 
-Progress: [███████░░░] 73%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [███████░░░] 73%
 | Phase 02 P04 | 8min | 2 tasks | 2 files |
 | Phase 03 P01 | 13min | 2 tasks | 3 files |
 | Phase 03 P02 | 19min | 3 tasks | 5 files |
+| Phase 03 P03 | 27min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -106,6 +107,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-02]: shell_tracker.py deleted; badge is hook-native (background_tasks_count) — D-02b's Monitor/Agent/async-agent evidence retained as a trimmed single-read in-file peek (_peek_agent_activity), never the bg-shell/badge-driving patterns
 - [Phase ?]: [Phase 03-02]: D-02a (Esc-interrupt early recovery) floored at STATE_PROMPT_STALE_SEC — an unfloored age<=window check misfired on same-instant hook/jsonl write-order races at genuine turn start (caught by the plan's own test suite, fixed as Rule 1)
 - [Phase ?]: [Phase 03-02]: SessionEnd tombstones use an on-disk marker (STATE_TOMBSTONE_SUFFIX=.ended), not an in-process suppression set, so D-06's ghost-row fix survives a monitor restart; a resumed session deletes its own stale tombstone as its fresh state record is read
+- [Phase ?]: [Phase 03-03]: hooks/state-writer.sh's Stop branch now resolves to waiting unconditionally (D-03) — background_tasks_count is badge-only everywhere, divergence class 3 eliminated at its source
+- [Phase ?]: [Phase 03-03]: auq-lock.sh retired (D-04) — deleted from repo, no longer installed/registered by default; --remove-auq-lock teardown filters at the individual hooks[].command level (not the whole entry object), after an entry-level filter was caught deleting a co-located working-lock.sh command in a synthetic test
+- [Phase ?]: [Phase 03-03]: hooks/working-lock.sh backports state-writer.sh's session-id character allowlist (T-03-01), byte-identical in shape, before either lock branch runs
+- [Phase ?]: [Phase 03-03]: FLIP-02 closed with an evidenced deleted-class-to-replacement coverage table; requirements.mark-complete run for FLIP-01/FLIP-02 only — FLIP-03 stays Pending since its README half is explicitly plan 03-04's scope
 
 ### Pending Todos
 
@@ -142,6 +147,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T12:00:21.104Z
-Stopped at: Completed 03-02-PLAN.md
+Last session: 2026-08-06T12:19:52.275Z
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
