@@ -463,12 +463,15 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
                 self.assertEqual(obj["state"], "waiting")
                 self.assertEqual(obj["background_tasks_count"], 0)
 
-    def test_stop_with_one_running_entry_produces_working_and_count_one(self):
+    def test_stop_with_one_running_entry_produces_waiting_and_count_one(self):
+        """D-03/TEST-MATRIX case 17 rev.2: turn-end is badge-only — a
+        still-running background task no longer holds the verdict at
+        working, it only rides along in background_tasks_count."""
         sid = "one-running"
         result = self._stop(sid, background_tasks=[{"status": "running"}])
         self.assertEqual(result.returncode, 0, result.stderr)
         obj = self._read(sid)
-        self.assertEqual(obj["state"], "working")
+        self.assertEqual(obj["state"], "waiting")
         self.assertEqual(obj["background_tasks_count"], 1)
 
     def test_stop_with_only_completed_and_failed_entries_produces_waiting_and_count_zero(self):
@@ -479,13 +482,42 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
         self.assertEqual(obj["state"], "waiting")
         self.assertEqual(obj["background_tasks_count"], 0)
 
-    def test_stop_with_entry_missing_status_key_produces_working_and_count_one(self):
+    def test_stop_with_running_completed_and_failed_entries_produces_waiting_and_count_one(self):
+        """Plan 03-03 Task 1 Test 3: three tasks, one running, one
+        completed, one failed — verdict is waiting (badge-only), and the
+        deny-list count rule (unchanged) still counts only the running one."""
+        sid = "mixed-three"
+        result = self._stop(sid, background_tasks=[
+            {"status": "running"}, {"status": "completed"}, {"status": "failed"},
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = self._read(sid)
+        self.assertEqual(obj["state"], "waiting")
+        self.assertEqual(obj["background_tasks_count"], 1)
+
+    def test_stop_with_entry_missing_status_key_produces_waiting_and_count_one(self):
         sid = "missing-status"
         result = self._stop(sid, background_tasks=[{"id": "task-1"}])
         self.assertEqual(result.returncode, 0, result.stderr)
         obj = self._read(sid)
-        self.assertEqual(obj["state"], "working")
+        self.assertEqual(obj["state"], "waiting")
         self.assertEqual(obj["background_tasks_count"], 1)
+
+    def test_stop_never_produces_working_regardless_of_background_task_count(self):
+        """D-03: no Stop payload, for any background-task count, ever
+        produces a working verdict — parameterised over 0, 1 and 5."""
+        cases = {
+            "count-zero": [],
+            "count-one": [{"status": "running"}],
+            "count-five": [{"status": "running"} for _ in range(5)],
+        }
+        for sid, bg in cases.items():
+            with self.subTest(sid=sid):
+                result = self._stop(sid, background_tasks=bg)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = self._read(sid)
+                self.assertEqual(obj["state"], "waiting")
+                self.assertNotEqual(obj["state"], "working")
 
     def test_subagent_stop_leaves_existing_state_file_byte_identical(self):
         sid = "subagent-target"

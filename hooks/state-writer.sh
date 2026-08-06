@@ -48,9 +48,11 @@
 #     mid-session /compact re-fires SessionStart on the SAME session_id;
 #     writing idle here would blank a live working state and read
 #     downstream as a turn that ended)
-#   Stop                                     -> waiting when
-#     background_tasks_count == 0, working when > 0 (case 17 — replaces
-#     shell_tracker-driven grey-while-async-work)
+#   Stop                                     -> waiting, unconditionally
+#     (case 17 rev.2, TEST-MATRIX.md section 4 — D-03: a turn that ends
+#     while background work is still running now shows WAITING and
+#     notifies immediately; background_tasks_count still rides along in
+#     the record but only as badge data, never as a verdict input)
 #   SubagentStop                             -> no write, deliberate no-op
 #     (case 12 — can arrive AFTER the parent's Stop; writing here would move
 #     the verdict after the turn already ended)
@@ -148,11 +150,12 @@ case "$event" in
     state="idle"
     ;;
   Stop)
-    if [ "$background_tasks_count" -gt 0 ]; then
-      state="working"
-    else
-      state="waiting"
-    fi
+    # Unconditionally waiting (D-03, TEST-MATRIX case 17 rev.2): the
+    # background-task count resolved above still rides into the record
+    # below, but only as badge data — it never gates this verdict. See
+    # the header's event-to-state mapping comment for the divergence-class-3
+    # history this reverses.
+    state="waiting"
     ;;
   SubagentStop)
     # Deliberate no-op: SubagentStop can arrive AFTER the parent's Stop
