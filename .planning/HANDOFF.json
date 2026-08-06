@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-29T17:29:22.389Z",
+  "timestamp": "2026-08-06T10:00:53.402Z",
   "phase": "02",
   "phase_name": "state-writer-shadow-mode",
   "phase_dir": ".planning/phases/02-state-writer-shadow-mode",
@@ -9,33 +9,25 @@
   "total_tasks": 2,
   "status": "paused",
   "completed_tasks": [
-    {"id": "02-01", "name": "Tracer — Stop event → atomic state file → shadow WAITING verdict → divergence record + SIGKILL atomicity proof", "status": "done", "commit": "6cf8e77..4bb1764"},
-    {"id": "02-02", "name": "Full D-08 event-to-state mapping (10 events), background-task gate, --remove-state-writer teardown", "status": "done", "commit": "8817d17..4aa9b78"},
-    {"id": "02-03", "name": "State-file engine: derivation, broken-file shapes, heartbeat staleness + docker inspect liveness, hookless fallback", "status": "done", "commit": "29d5549..67d8f34"},
-    {"id": "02-04", "name": "Episodic divergence records with legacy evidence + 5MB guard; --state-files diagnostic mode", "status": "done", "commit": "97c6309..bc5cc2a"},
-    {"id": "02-05/T1", "name": "Shadow-mode activation runbook 02-UAT.md, grounded in shipped code", "status": "done", "commit": "7e7e432"}
+    {"id": "02-01..02-05", "name": "All five Phase 2 plans (state writer, event mapping, shadow engine, divergence records, activation runbook)", "status": "done", "commit": "6cf8e77..7e7e432"},
+    {"id": "02-05/T2", "name": "Live UAT on the real machine — 8/8 sections passed (Section A closed by inference over the review week)", "status": "done", "commit": "see 02-UAT.md"},
+    {"id": "section-e-review", "name": "Section E divergence review: 343 records / 212 divergences over 2026-07-30→08-06 classified into 6 known classes, zero unknowns. Verdict GREEN — flip approved by user, 2026-08-06", "status": "done", "commit": "this WIP commit — see 02-DIVERGENCE-REVIEW.md"}
   ],
   "remaining_tasks": [
-    {"id": "02-05/T2", "name": "checkpoint:human-verify (gate=blocking): activate shadow mode on the real Windows machine, confirm zero visible change, divergence log accumulating", "status": "awaiting_human"}
+    {"id": "phase-3", "name": "/gsd-plan-phase 3 — Flip to Default & Cleanup (hook engine primary, hybrid jsonl fallback for Esc-interrupt + hook-silence pins, bg → badge-only, shadow-mode teardown)", "status": "not_started"}
   ],
-  "blockers": [
-    {"description": "Live UAT requires the real Windows + WSL2 + Docker machine (docker kill/pause, real overlay, real Claude sessions) — impossible from the sandbox", "type": "human_action", "workaround": "none; by design (D-05 user-assisted UAT)"}
-  ],
+  "blockers": [],
   "async_jobs": [],
   "human_actions_pending": [
-    {"action": "Restart the Windows monitor and any already-open Claude Code sessions (settings.json is read at session start)", "context": "Hooks were installed in the dev container on 2026-07-29 (state-writer on 10 events; working-lock 3, auq-lock 4, event-logger 24 entries all intact, backup at ~/.claude/settings.json.bak.*)", "blocking": true},
-    {"action": "Work through 02-UAT.md sections A (zero visible change), B (docker inspect enum + 9p atomicity), C (hook-silent cases), F (lock hooks), record results in the Tests appendix (update result: pending rows + frontmatter status)", "context": "Task 2 checkpoint of plan 02-05; resume signal is the word 'approved' or a description of any visible difference (treated as a defect)", "blocking": true},
-    {"action": "Leave shadow mode running ~1 week so ~/.claude/monitor-divergence.log accumulates records", "context": "The divergence review conversation and the flip decision belong to Phase 3 (D-02, D-03)", "blocking": false}
+    {"action": "Resume from the MacBook devbox (matteo@192.168.1.139): clone/pull 3000tech/claude-greenlight branch feat/hook-refactor, then /gsd-resume-work", "context": "User decision 2026-08-06: Phase 3 planning runs on the devbox, not on the Windows machine", "blocking": true},
+    {"action": "OPTIONAL: copy ~/.claude/monitor-divergence.log from the Windows/WSL2 machine to the devbox if planning wants the raw records", "context": "The log is machine-local and deliberately NOT committed (session UUIDs/hostnames); 02-DIVERGENCE-REVIEW.md carries all aggregated numbers and is normally sufficient", "blocking": false},
+    {"action": "Leave shadow mode RUNNING on the Windows machine until Phase 3 executes the flip there", "context": "Teardown (rm -rf ~/.claude/monitor-state, divergence log removal, --remove-state-writer sweep) is Phase 3 cleanup scope, per 02-UAT.md Teardown section", "blocking": false}
   ],
   "decisions": [
-    {"decision": "PreToolUse deliberately NOT registered in the state writer", "rationale": "TEST-MATRIX cases 4/6: fires in the same instant as PermissionRequest; registering both would make needs_input depend on hook execution order", "phase": "02"},
-    {"decision": "SessionStart(source=compact) writes nothing", "rationale": "case 11: /compact re-fires SessionStart with the same session_id mid-session; writing idle would blank a live working state", "phase": "02"},
-    {"decision": "background_tasks_count uses a deny-list (excludes completed/failed), not an allowlist on running", "rationale": "an undocumented status value must not undercount live work (RESEARCH A2)", "phase": "02"},
-    {"decision": "Divergence records are episodic (one diverged + one resolved record with duration), not per-tick lines", "rationale": "D-02 says Claude reads this log; ~120 identical lines per steady disagreement would be unreadable", "phase": "02"},
-    {"decision": "assumption_delta recorded as add-alongside in 02-01; promote (flip) is Phase 3", "rationale": "shadow mode keeps legacy authoritative for UI by design; invariant test asserts select_render_sessions(legacy, shadow, False) is legacy by identity", "phase": "02"},
-    {"decision": "Fixed latent NameError in scan_containers() on zero-labelled-container ticks (in-scope deviation, 02-03)", "rationale": "the task rewrote the function's return shape; the raise path would have swallowed the new fields too", "phase": "02"}
+    {"decision": "FLIP APPROVED — Section E review verdict GREEN", "rationale": "Only hooks-wrong class (9 hook-silence events) is exactly what the hybrid fallback covers; 156 events are legacy defects the flip fixes; 4th jsonl format break + fresh false green landed during the review window", "phase": "02"},
+    {"decision": "Remote devbox + mobile notifications = separate milestone AFTER the flip", "rationale": "New scope (Claude in Docker on headless MacBook, state + mobile push). Phase 3 keeps doors open: state files carry hostname, remote side only transports monitor-state/*.json", "phase": "02"}
   ],
   "uncommitted_files": [],
-  "next_action": "User performs live UAT per 02-UAT.md on the real machine. When they respond 'approved' (here or via /gsd-verify-work 2): spawn a gsd-executor continuation for plan 02-05 (verify 7e7e432, record checkpoint approval, write+commit 02-05-SUMMARY.md), then run the gsd-verifier phase-goal check and phase.complete. If they describe a visible difference instead: treat as defect, route to /gsd-debug or gap closure.",
-  "context_notes": "Full autonomous run this session: /gsd-plan-phase 2 (research→patterns→5 plans→checker pass first iteration→coverage gates 9/9 reqs, 9/9 decisions) then auto-advance /gsd-execute-phase 2 --auto --no-transition (sequential on main tree, no worktrees, per parallelization:false and recorded worktree-executor feedback). 163 tests green, zero regressions. Overlay unchanged by identity assertion (D-01). Hooks installed in-container at user request after the checkpoint; ~/.claude/monitor-state/ already has 1 file (a post-install session wrote it — writer is live). event-logger.sh from Phase 1 left installed alongside (separate deferred todo). Code review gate + verifier NOT yet run for the phase — they run after the UAT checkpoint resolves."
+  "next_action": "/gsd-plan-phase 3 (from the devbox after /gsd-resume-work). Required reading first: 02-DIVERGENCE-REVIEW.md (verdict + carry-forwards), then NOTES.md Phase 3 design, TEST-MATRIX.md verdict section, STATE.md pending todos",
+  "context_notes": "Phase 2 is fully closed — nothing left to build or verify in it. The whole point of this pause is a MACHINE handoff (Windows/WSL2 dev container -> MacBook devbox). Everything Phase 3 planning needs is in the repo; the raw divergence log and the live shadow-mode installation remain on the Windows machine and stay untouched until Phase 3 execution flips and tears down there. The devbox has no ~/.claude memories from the Windows machine — the repo artifacts are deliberately self-sufficient."
 }

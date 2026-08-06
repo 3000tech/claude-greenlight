@@ -4,8 +4,8 @@ phase: 02-state-writer-shadow-mode
 plan: 05
 source: [02-02-SUMMARY.md, 02-04-SUMMARY.md, hooks/state-writer.sh, hooks/state-writer-events.json, hooks/install.sh, monitor.py]
 prepared: 2026-07-29
-mode: live-verification-pending   # written in-sandbox; every command below is grounded in the shipped code, but has not yet been run against the real Windows + WSL2 + Docker machine — that run is this plan's Task 2 checkpoint
-verdict: shadow mode installed and running, divergence log accumulating — the flip decision itself belongs to Phase 3, after the review window in Section E
+mode: complete   # all sections closed live; Section E review concluded 2026-08-06 — see 02-DIVERGENCE-REVIEW.md
+verdict: shadow mode validated over a full week; Section E review (2026-08-06) classified all 212 divergences into 6 known classes and concluded GREEN — flip approved, proceed to /gsd-plan-phase 3
 ---
 
 # Phase 2 Live Runbook — Shadow-Mode Activation
@@ -439,7 +439,7 @@ result: pass — verified in-session 2026-07-30 (CC 2.1.220): counts 10/3/4 conf
 
 ### 2. Section A — zero visible change
 expected: no perceptible difference across an ordinary hour of use; anything noticed (better or worse) recorded as a defect
-result: pending
+result: pass — 2026-08-06: closed by inference over the full review week (2026-07-30 → 2026-08-06) of real daily use with shadow mode active; zero visible differences reported by the user in that window (far exceeding the prescribed single hour)
 
 ### 3. Section B1 — container-status enum
 expected: three literal docker status strings recorded (running/paused/stopped variant)
@@ -459,7 +459,7 @@ result: pass — 2026-07-30 (CC 2.1.220): user ran the diagnostic on the real ma
 
 ### 7. Section E — divergence log accumulating
 expected: `~/.claude/monitor-divergence.log` non-empty and parseable after a few hours of real use
-result: pass — 2026-07-30 (CC 2.1.220): log accumulating clean episodic diverged/resolved pairs across every case exercised today (session-start transients, C1 inverted, C2 canonical, C4 paused-drop); all records parse via jq
+result: pass — 2026-07-30 (CC 2.1.220): log accumulating clean episodic diverged/resolved pairs across every case exercised today (session-start transients, C1 inverted, C2 canonical, C4 paused-drop); all records parse via jq. REVIEW CONCLUDED 2026-08-06: full-week log (343 records) analyzed and classified in-session per the Section E protocol — verdict GREEN, flip approved. Full classification and Phase 3 carry-forwards in 02-DIVERGENCE-REVIEW.md
 
 ### 8. Section F — lock hooks non-regression
 expected: AUQ modal, permission prompt, and long tool call all behave exactly as before this phase
@@ -468,7 +468,7 @@ result: pass — 2026-07-30 (CC 2.1.220): all three verified live (AUQ green + f
 ## Summary
 
 total: 8
-passed: 7
+passed: 8
 issues: 0
-pending: 1
+pending: 0
 skipped: 0

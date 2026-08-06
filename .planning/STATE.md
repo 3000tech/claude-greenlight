@@ -4,11 +4,11 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 current_phase_name: state-writer-shadow-mode
-status: executing
-stopped_at: "Completed quick task 260731-cgg: session chips/rows show disambiguated container name"
-last_updated: "2026-07-31T08:52:15.706Z"
-last_activity: 2026-07-31
-last_activity_desc: "Completed quick task 260731-cgg: session chips/rows show disambiguated container name"
+status: phase_complete
+stopped_at: "Section E divergence review concluded (GREEN, flip approved) — paused for machine handoff, resume with /gsd-plan-phase 3"
+last_updated: "2026-08-06T10:45:00.000Z"
+last_activity: 2026-08-06
+last_activity_desc: "Section E divergence review concluded: flip approved, Phase 2 fully closed (UAT 8/8)"
 progress:
   total_phases: 2
   completed_phases: 1
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 
 ## Current Position
 
-Phase: 02 (state-writer-shadow-mode) — EXECUTING
-Plan: 5 of 5
-Status: Ready to execute
-Last activity: 2026-07-31 — Completed quick task 260731-cgg: session chips/rows show disambiguated container name
+Phase: 02 (state-writer-shadow-mode) — COMPLETE (UAT 8/8, Section E review GREEN 2026-08-06)
+Plan: 5 of 5 done
+Status: Flip approved — next action is `/gsd-plan-phase 3` (intended to run from the MacBook devbox after `/gsd-resume-work`)
+Last activity: 2026-08-06 — Section E divergence review concluded: 212 divergences over a full week, 6 known classes, zero unknowns; verdict GREEN (see phases/02-state-writer-shadow-mode/02-DIVERGENCE-REVIEW.md)
 
 Progress: [█████████░] 86%
 
@@ -72,6 +72,8 @@ Progress: [█████████░] 86%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [2026-08-06 / Section E review]: FLIP APPROVED — hook engine becomes primary in Phase 3, hybrid jsonl fallback retained ONLY for Esc-interrupt recovery and hook-silence pins (Monitor/agents/working-lock evidence). Bg-shell hook rule becomes badge-only at the flip.
+- [2026-08-06]: Remote devbox support (Claude in Docker on the headless MacBook, matteo@192.168.1.139) + mobile notifications = SEPARATE MILESTONE after v1.0's flip, not Phase 3 scope. Phase 3 must not close doors: state files already carry `hostname`; a remote aggregator only needs to transport `~/.claude/monitor-state/*.json`.
 - Hybrid model (hooks primary + targeted fallbacks), not hooks-only — pending live verification in Phase 1
 - Never big-bang: extend hooks → shadow mode → flip default — 3-phase roadmap follows this exactly
 - Preserve current async-work semantics (grey while bg shells/agents run) unless live data says otherwise
