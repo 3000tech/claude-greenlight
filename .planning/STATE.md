@@ -151,6 +151,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T13:11:34.354Z
-Stopped at: Phase 3 executed: 4/4 plans + review-fix cycle, 21/21 must-haves verified, 236 tests green. Awaiting live UAT on the Windows machine (03-UAT.md)
+Last session: 2026-08-06T13:45:00.000Z (Windows machine)
+Stopped at: Handoff consumed on the Windows machine — resuming into the 03-UAT.md live run (Setup → Sections A–I → gated Teardown)
 Resume file: .planning/phases/03-flip-to-default-cleanup/03-UAT.md
