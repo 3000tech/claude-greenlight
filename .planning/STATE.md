@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: flip-to-default-cleanup
 status: executing
-stopped_at: Phase 3 context gathered (document-driven)
-last_updated: "2026-08-06T11:20:17.245Z"
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-08-06T11:37:05.718Z"
 last_activity: 2026-08-06
 last_activity_desc: Phase 3 execution started
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 11
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 ## Current Position
 
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 3
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-08-06 — Phase 3 execution started
 
-Progress: [█████████░] 86%
+Progress: [██████░░░░] 64%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [█████████░] 86%
 | Phase 02 P02 | 15min | 3 tasks | 2 files |
 | Phase 02 P03 | 14min | 3 tasks | 2 files |
 | Phase 02 P04 | 8min | 2 tasks | 2 files |
+| Phase 03 P01 | 13min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-04]: filter_divergence_events() is a pure records-in/state-in -> events/next-state-out function, no MonitorApp mutation, so episode collapse is unit-testable without tkinter
 - [Phase ?]: [quick-260731-an2]: BG_PIN_MAX_SEC=900s time-caps the legacy bg-shell WORKING pin (status decision only, badge stays uncapped); TEST-MATRIX section 4 records the same cap requirement for the Phase 3 hook-native rule
 - [Phase ?]: [quick-260731-c52]: container_display_name() prefix test (name.startswith(project)) is the sole disambiguation rule — anchors displayed text to the row's own project label so a duplicate container is distinguishable without changing sorting/keying/mapping identity
+- [Phase ?]: select_render_sessions() narrowed to a 1-arg identity seam (D-08); scan() stays live in refresh() to feed the D-02c bridge and plan 03-02's fallbacks — not dead code
+- [Phase ?]: scan_state_files() now stamps display_name via session_display_name()/container_display_name(), closing the duplicate-container regression the flip would have reintroduced (quick 260731-cgg)
+- [Phase ?]: Goal16's content-leak test (T-02-17) deleted with its legacy_evidence builder; the must_haves prohibition against reintroducing a prompt/tool-derived string assembler stays flagged, not silently closed
 
 ### Pending Todos
 
@@ -107,7 +111,7 @@ Recent decisions affecting current work:
 - [minor/general] Show paused-container sessions in overlay instead of dropping them (2026-07-30) — idea da UAT C4: il motore state-file le tiene già (D-06), è solo rendering al flip di Phase 3
 - [minor/general] Startup check: refuse to start with clear error when hooks are not installed (2026-07-30) — proposta utente in UAT; candidato allo scope Phase 3 (post-flip un monitor senza hook è quasi cieco)
 - [minor/general] Ghost jsonl rows survive container kill via dir-fallback — consider SessionEnd tombstones (2026-07-30) — quirk legacy pre-esistente visto in UAT; lo state-writer sa che la sessione è finita ma il ponte legacy_origin ricopia il fantasma
-- [cosmetic/general] Remove dead project_name() helper in monitor.py (2026-07-30) — unico codice morto del file, rimuovere in Phase 3 col refactor del flip
+- ~~[cosmetic/general] Remove dead project_name() helper in monitor.py~~ DONE 2026-08-06 (plan 03-01, Task 2) — confirmed zero call sites, deleted
 
 ### Blockers/Concerns
 
@@ -134,6 +138,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T10:36:49.608Z
-Stopped at: Phase 3 context gathered (document-driven)
-Resume file: /workspace/.planning/phases/03-flip-to-default-cleanup/03-CONTEXT.md
+Last session: 2026-08-06T11:37:05.700Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None

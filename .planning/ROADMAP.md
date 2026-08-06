@@ -81,12 +81,12 @@ Plans:
   2. `test_monitor.py` covers the state-file engine at equivalent coverage to before, with state-file fixtures replacing jsonl fixtures wherever legacy code was removed.
   3. `hooks/install.sh`, the settings snippet, and the README document the new architecture and hook requirements clearly enough that a new container/user can be onboarded correctly.
 
-**Plans**: 4 plans
+**Plans**: 1/4 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Tracer: flip the render seam so hook-written state drives the overlay end to end, then delete the shadow-mode machinery (FLIP-01, FLIP-02)
+- [x] 03-01-PLAN.md — Tracer: flip the render seam so hook-written state drives the overlay end to end, then delete the shadow-mode machinery (FLIP-01, FLIP-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -109,4 +109,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Hook Coverage Verification | 2/2 | Complete    | 2026-07-29 |
 | 2. State Writer & Shadow Mode | 4/5 | In Progress|  |
-| 3. Flip to Default & Cleanup | 0/4 | Planned | - |
+| 3. Flip to Default & Cleanup | 1/4 | In Progress|  |
