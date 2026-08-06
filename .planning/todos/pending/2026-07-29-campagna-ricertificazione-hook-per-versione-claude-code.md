@@ -4,7 +4,8 @@ title: Campagna ricertificazione hook per versione Claude Code
 area: testing
 severity: minor
 files:
-  - .planning/TEST-MATRIX.md
+  - docs/TEST-MATRIX.md
+  - docs/RECERTIFICATION.md
   - .planning/phases/01-hook-coverage-verification/01-UAT.md
   - hooks/event-logger.sh
   - hooks/install.sh

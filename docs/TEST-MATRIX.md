@@ -1,5 +1,10 @@
 # Live test matrix — hook coverage verification
 
+**This is the per-version hook verification reference.** The Verified column
+records live runs against a specific Claude Code version — a version bump
+(major or minor) is the trigger to re-run it. See
+[RECERTIFICATION.md](RECERTIFICATION.md) for the re-run loop.
+
 Goal: before (and during) the hook-driven refactor, verify for each real-world
 case **which hook event fires** and whether it is enough to derive the correct
 state — or whether jsonl/lock fallback remains necessary (hybrid model).
@@ -8,10 +13,10 @@ How to use: the instrument already exists — `hooks/event-logger.sh`
 (installed/removed via `hooks/install.sh` and `hooks/install.sh
 --remove-logger`) appends every Claude Code hook event as one JSONL line to
 `~/.claude/hook-events.log`. Follow
-[01-UAT.md](phases/01-hook-coverage-verification/01-UAT.md) end to end — it
-gives the exact trigger and the exact observation command for every row
-below — and fill in the last two columns of this table as you go. Cases
-marked ⚠ are the ones that historically broke transcript parsing — they
+[01-UAT.md](../.planning/phases/01-hook-coverage-verification/01-UAT.md) end
+to end — it gives the exact trigger and the exact observation command for
+every row below — and fill in the last two columns of this table as you go.
+Cases marked ⚠ are the ones that historically broke transcript parsing — they
 decide the hybrid question.
 
 Expected states: `working` (grey), `waiting` (green, notify), `needs_input`
@@ -44,7 +49,7 @@ Expected states: `working` (grey), `waiting` (green, notify), `needs_input`
 ## Verdict to extract
 
 Fill in every slot below after the live run in
-[01-UAT.md](phases/01-hook-coverage-verification/01-UAT.md). This section
+[01-UAT.md](../.planning/phases/01-hook-coverage-verification/01-UAT.md). This section
 cannot be completed vaguely — every hook-silent case needs exactly one row
 naming a concrete fallback.
 
@@ -99,4 +104,4 @@ mechanism that does not exist yet.
 
 These answers are the direct input to Phase 2's **ENG-06** fallback coverage
 requirement and to the state-writer's event-to-state mapping in
-[NOTES.md](NOTES.md) (shadow mode phase).
+[NOTES.md](../.planning/NOTES.md) (shadow mode phase).
