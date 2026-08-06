@@ -756,6 +756,7 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                     STATE_PROMPT_STALE_SEC < age <= window
                     and legacy_match is not None
                     and legacy_match.get("working_locked") is False
+                    and legacy_match.get("status") != "WORKING"
                     and isinstance(legacy_match.get("mtime"), (int, float))
                     and legacy_match["mtime"] > mtime
                 )
