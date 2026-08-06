@@ -23,7 +23,7 @@ Claude Greenlight reads the session transcripts under `~/.claude` on the **host*
 
 - **Always-on-top overlay** (standard or compact) listing every active session with a project label and its live state: working, ready for you, or waiting for input
 - **Notifies you** — toast, sound, taskbar flash — when a session that has been working for a while becomes ready
-- **Catches permission prompts and `AskUserQuestion` modals** via lightweight hooks, so a session waiting on you mid-turn never shows as "working"
+- **A session waiting on you mid-turn never shows as "working"** — permission prompts and `AskUserQuestion` modals surface the instant they appear, through the same hooks that drive state detection
 - **Optional Telegram push** to your phone, independent of local notifications
 - **Per-session aliases**, persisted across restarts
 - **Zero dependencies** — Python 3.10+ standard library only (tkinter)
@@ -56,13 +56,13 @@ docker run -v "%USERPROFILE%\.claude:/home/dev/.claude" ...
 
 The container user must be able to write there (match its UID to the mount, e.g. UID 1000 on WSL2 9p mounts). Sessions running directly on Windows or in WSL with `~/.claude` on the Windows filesystem are visible with no extra setup.
 
-**4. Install the hooks (recommended)**
+**4. Install the hooks (required)**
 
 ```
 bash hooks/install.sh
 ```
 
-Run it wherever Claude Code actually runs (inside the container image / entrypoint, or in WSL). Requires `jq`. The hooks write tiny lock files under `~/.claude/` that make state detection reliable in the cases transcript parsing alone gets wrong: long multi-tool turns, permission prompts, `AskUserQuestion` modals. Without them the monitor still works, but those cases can be misread.
+Run it wherever Claude Code actually runs — inside the container image / entrypoint, or in WSL. Requires `jq`. This is how the monitor knows a session's state: installing writes one small per-session state file under `~/.claude/monitor-state/` on Claude Code's own lifecycle events (turn start, tool use, turn end, permission prompts), plus a working lock that covers the gaps where no event fires. A session running without the hooks stays visible — the monitor still reads its transcript as a fallback — but its state is less accurate than a hooked session's.
 
 **Start at login** (optional): press `Win+R`, run `shell:startup`, and drop a shortcut to `monitor.bat` in the folder that opens.
 
@@ -94,10 +94,11 @@ Tools like cctop, Sessionly, or the various claude-code-monitors work well when 
 
 ```
 python3 -m unittest test_monitor.py
+python3 -m unittest test_state_writer.py
 python3 -m unittest test_event_logger.py
 ```
 
-Design notes live in [`.planning/NOTES.md`](.planning/NOTES.md).
+Design notes live in [`.planning/NOTES.md`](.planning/NOTES.md). The hook verification matrix and the per-version recertification runbook live in [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) and [`docs/RECERTIFICATION.md`](docs/RECERTIFICATION.md).
 
 ---
 
