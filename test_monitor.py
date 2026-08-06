@@ -1293,9 +1293,11 @@ class Goal10_StateFileRobustness(StateFileTestBase):
 
 class Goal11_StateFileStaleness(StateFileTestBase):
     """A stale WORKING verdict recovers to WAITING via heartbeat silence +
-    docker liveness cross-check — the named fallback for the Esc interrupt,
-    the permission-denial dead end, the killed container and the abandoned
-    pre-tool prompt (TEST-MATRIX cases 8, 5-deny, 9, 19)."""
+    docker liveness cross-check — the named fallback for the permission-
+    denial dead end, the killed container and the abandoned pre-tool
+    prompt (TEST-MATRIX cases 5-deny, 9, 19). D-02a (Esc interrupt, case 8)
+    and D-02b (hook-silence pin, divergence class 6) extend the same
+    staleness block — see the tests below."""
 
     @staticmethod
     def _container_info(hostname_to_status: dict[str, str]) -> dict:
@@ -1376,6 +1378,130 @@ class Goal11_StateFileStaleness(StateFileTestBase):
             sessionid_to_label={"a": "L"},
             container_info=self._container_info({}))
         self.assertEqual(s["status"], "WAITING")
+
+    # -----------------------------------------------------------------
+    # D-02a/D-02b fallbacks (plan 03-02 task 2): both read a hand-built
+    # `legacy_sessions` list rather than exercising scan() — these are
+    # unit tests of the fallback wiring; the peek and lock computation
+    # have their own coverage in Goal22_AgentActivityPeek.
+    # -----------------------------------------------------------------
+
+    def test_esc_interrupt_early_recovery_with_newer_legacy_mtime(self):
+        """D-02a Test 1: aged between the prompt-stale and heartbeat
+        windows, a legacy counterpart with working_locked False and a
+        jsonl mtime newer than the record's own recovers early."""
+        record_mtime = time.time() - 150  # inside (90s, 600s]
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolBatch", mtime=record_mtime)
+        legacy = [{"key": "a", "session_id": "a", "working_locked": False,
+                   "mtime": record_mtime + 30, "agent_activity": False}]
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_esc_interrupt_guard_working_locked_true_stays_working(self):
+        """D-02a Test 2: same shape, but the legacy counterpart's
+        working_locked is True — no early recovery, stays WORKING until
+        the normal window elapses."""
+        record_mtime = time.time() - 150
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolBatch", mtime=record_mtime)
+        legacy = [{"key": "a", "session_id": "a", "working_locked": True,
+                   "mtime": record_mtime + 30, "agent_activity": False}]
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_esc_interrupt_guard_no_legacy_match_stays_working(self):
+        """D-02a Test 3: no matching legacy entry at all (hookless or
+        jsonl-invisible session) — absence of evidence never triggers
+        early recovery."""
+        record_mtime = time.time() - 150
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolBatch", mtime=record_mtime)
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=[])
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_hook_silence_pin_with_agent_activity_stays_working(self):
+        """D-02b Test 4: past the heartbeat window, a legacy counterpart
+        reporting agent_activity True suppresses the WAITING transition."""
+        record_mtime = time.time() - (monitor.STATE_HEARTBEAT_STALE_SEC + 60)
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolUse", mtime=record_mtime)
+        legacy = [{"key": "a", "session_id": "a", "working_locked": False,
+                   "mtime": record_mtime, "agent_activity": True}]
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_hook_silence_pin_with_working_locked_stays_working(self):
+        """D-02b Test 5: same, but working_locked True is the pinning
+        signal instead of agent_activity."""
+        record_mtime = time.time() - (monitor.STATE_HEARTBEAT_STALE_SEC + 60)
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolUse", mtime=record_mtime)
+        legacy = [{"key": "a", "session_id": "a", "working_locked": True,
+                   "mtime": record_mtime, "agent_activity": False}]
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_hook_silence_pin_with_neither_signal_flips_waiting(self):
+        """D-02b Test 6: neither pin signal present — flips to WAITING
+        exactly as today."""
+        record_mtime = time.time() - (monitor.STATE_HEARTBEAT_STALE_SEC + 60)
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolUse", mtime=record_mtime)
+        legacy = [{"key": "a", "session_id": "a", "working_locked": False,
+                   "mtime": record_mtime, "agent_activity": False}]
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        self.assertEqual(s["status"], "WAITING")
+
+    def test_paused_container_wins_over_fallback_evidence(self):
+        """Test 7: the existing paused-container exception still
+        suppresses the WAITING transition regardless of any fallback
+        evidence (neither pin signal present, yet paused wins)."""
+        record_mtime = time.time() - (monitor.STATE_HEARTBEAT_STALE_SEC + 60)
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=int(record_mtime * 1000),
+                           last_event="PostToolUse", mtime=record_mtime)
+        legacy = [{"key": "a", "session_id": "a", "working_locked": False,
+                   "mtime": record_mtime, "agent_activity": False}]
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"}, legacy_sessions=legacy,
+            container_info=self._container_info({"h1": "paused"}))
+        self.assertEqual(s["status"], "WORKING")
+
+    def test_fallback_evidence_comes_from_passed_legacy_list_not_fresh_io(self):
+        """No second jsonl read or lock-file stat: repoint PROJECTS_DIR
+        and WORKING_LOCK_DIR at paths that don't exist, pass an explicit
+        legacy_sessions list, and the pinned verdict still comes through —
+        proving the evidence came from the list, not fresh I/O."""
+        orig_projects = monitor.PROJECTS_DIR
+        orig_wlock = monitor.WORKING_LOCK_DIR
+        monitor.PROJECTS_DIR = self.root / "does-not-exist-projects"
+        monitor.WORKING_LOCK_DIR = self.root / "does-not-exist-locks"
+        try:
+            record_mtime = time.time() - (monitor.STATE_HEARTBEAT_STALE_SEC + 60)
+            self._write_state("a", state="working", hostname="h1",
+                               ts_ms=int(record_mtime * 1000),
+                               last_event="PostToolUse", mtime=record_mtime)
+            legacy = [{"key": "a", "session_id": "a", "working_locked": True,
+                       "mtime": record_mtime, "agent_activity": False}]
+            [s] = monitor.scan_state_files(
+                sessionid_to_label={"a": "L"}, legacy_sessions=legacy)
+        finally:
+            monitor.PROJECTS_DIR = orig_projects
+            monitor.WORKING_LOCK_DIR = orig_wlock
+        self.assertEqual(s["status"], "WORKING")
 
 
 class Goal12_ContainerInfoShape(unittest.TestCase):

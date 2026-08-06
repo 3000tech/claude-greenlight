@@ -574,9 +574,30 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     without a fresher heartbeat, the verdict recovers to WAITING — unless
     the record's hostname maps to a `paused` container, which D-06 treats
     as alive-but-frozen, never dead. This is the named fallback for the
-    Esc interrupt, the permission-denial dead end, the killed container and
-    the abandoned pre-tool prompt (TEST-MATRIX cases 8, 5-deny, 9, 19) —
-    none of which emit any hook event to hang a transition on.
+    permission-denial dead end, the killed container and the abandoned
+    pre-tool prompt (TEST-MATRIX cases 5-deny, 9, 19) — none of which emit
+    any hook event to hang a transition on.
+
+    Two more fallbacks extend that same staleness block, both reading
+    evidence `scan()` already computed once per tick via `legacy_sessions`
+    — never a second jsonl read or WORKING_LOCK_DIR stat:
+
+    - D-02a (Esc-interrupt early recovery, TEST-MATRIX case 8): when the
+      matching legacy entry reports `working_locked` False AND its jsonl
+      `mtime` is newer than the state record's own, recovers to WAITING
+      before the heartbeat window elapses — `working_locked` False alone is
+      ambiguous (also the pre-turn state), the jsonl-advance conjunct is
+      what proves an interrupt already happened (UAT C1, cc 2.1.220).
+    - D-02b (hook-silence pin, divergence class 6 — 9 events/week, longest
+      ~50min): when the matching legacy entry reports `agent_activity` True
+      or `working_locked` True, suppresses the post-window WAITING
+      transition the same way the paused-container exception does — a
+      long-running Monitor tool, foreground subagent or slow Bash call
+      keeps the session pinned WORKING instead of firing a false
+      notification.
+
+    Both are inert whenever the matching legacy entry is missing (a
+    hookless or jsonl-invisible session falls through to the plain window).
 
     Degrades one session at a time, never the whole tick (TEST-MATRIX case
     20): a directory-listing failure returns an empty list, a single file's
@@ -601,6 +622,19 @@ def scan_state_files(label_map: dict[str, str] | None = None,
     standalone caller still sees the complete picture without a second
     full jsonl scan every tick.
     """
+    if legacy_sessions is None:
+        legacy_sessions = scan(label_map, sessionid_to_label, container_info=container_info)
+    # D-02a/D-02b fallback lookup: keyed by `key`, and by `session_id` too
+    # when it differs, so a state record finds its legacy counterpart in
+    # O(1). Built once per tick from the already-computed legacy_sessions —
+    # the per-record loop below never opens a jsonl or stats a lock file.
+    legacy_by_id: dict[str, dict] = {}
+    for legacy in legacy_sessions:
+        legacy_by_id[legacy["key"]] = legacy
+        sid = legacy.get("session_id")
+        if sid and sid not in legacy_by_id:
+            legacy_by_id[sid] = legacy
+
     sessions: list[dict] = []
     if STATE_DIR.is_dir():
         now = time.time()
@@ -640,12 +674,42 @@ def scan_state_files(label_map: dict[str, str] | None = None,
             if status == "WORKING":
                 window = (STATE_PROMPT_STALE_SEC if last_event == "UserPromptSubmit"
                           else STATE_HEARTBEAT_STALE_SEC)
-                if age > window:
-                    container_status = None
-                    if container_info and hostname:
-                        container_status = container_info.get(
-                            "hostname_to_status", {}).get(hostname)
+                legacy_match = legacy_by_id.get(session_id)
+                container_status = None
+                if container_info and hostname:
+                    container_status = container_info.get(
+                        "hostname_to_status", {}).get(hostname)
+                # D-02a — Esc-interrupt early recovery (TEST-MATRIX case 8):
+                # working_locked False alone is ambiguous (also the
+                # pre-turn state) — the jsonl mtime advancing past the state
+                # record's own mtime is what proves the interrupt already
+                # happened (UAT C1, cc 2.1.220), so recover now rather than
+                # waiting out the rest of the window. Floored at
+                # STATE_PROMPT_STALE_SEC so a state record that's still
+                # genuinely fresh (write-order races between the hook and
+                # the jsonl at turn start, both landing within the same
+                # instant) can never misfire this as an interrupt.
+                early_recovery = (
+                    STATE_PROMPT_STALE_SEC < age <= window
+                    and legacy_match is not None
+                    and legacy_match.get("working_locked") is False
+                    and isinstance(legacy_match.get("mtime"), (int, float))
+                    and legacy_match["mtime"] > mtime
+                )
+                if early_recovery:
                     if container_status != "paused":
+                        status, dot, color, rank = "WAITING", "●", "#4ade80", 1
+                elif age > window:
+                    # D-02b — hook-silence pin (divergence class 6): a
+                    # still-in-flight Monitor/foreground-Agent/async-agent
+                    # (agent_activity) or an armed working-lock suppresses
+                    # the transition exactly like the paused-container
+                    # exception below it.
+                    pinned = legacy_match is not None and (
+                        legacy_match.get("agent_activity")
+                        or legacy_match.get("working_locked")
+                    )
+                    if container_status != "paused" and not pinned:
                         status, dot, color, rank = "WAITING", "●", "#4ade80", 1
             bg_count = obj.get("background_tasks_count")
             if not isinstance(bg_count, (int, float)):
@@ -670,8 +734,6 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 "display_name": session_display_name(name, hostname, hostname_to_name),
             })
 
-    if legacy_sessions is None:
-        legacy_sessions = scan(label_map, sessionid_to_label, container_info=container_info)
     seen_keys = {s["key"] for s in sessions}
     for legacy in legacy_sessions:
         if legacy["key"] in seen_keys:
