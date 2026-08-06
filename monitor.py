@@ -1136,7 +1136,9 @@ def container_display_name(c: dict) -> str:
         return project if isinstance(project, str) else ""
     if not isinstance(project, str) or not project:
         return project if isinstance(project, str) else ""
-    if name.startswith(project):
+    if name.startswith(project) and (
+        len(name) == len(project) or name[len(project)] in "-_"
+    ):
         return name
     return project
 

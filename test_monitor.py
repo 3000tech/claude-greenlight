@@ -1860,6 +1860,15 @@ class Goal18_ContainerDisplayName(unittest.TestCase):
         row = {"project": "dev-tools", "name": "dev", "status": "Up"}
         self.assertEqual(monitor.container_display_name(row), "dev-tools")
 
+    def test_unrelated_container_sharing_a_character_prefix_is_not_a_suffix_match(self):
+        """WR-05: a bare str.startswith has no word-boundary check —
+        an unrelated docker-generated container name that merely begins
+        with the same characters as the project label (e.g. "devops" vs
+        project "dev") must NOT be treated as a disambiguating
+        launcher-suffixed duplicate."""
+        row = {"project": "dev", "name": "devops", "status": "Up"}
+        self.assertEqual(monitor.container_display_name(row), "dev")
+
     def test_helper_does_not_mutate_the_row_dict(self):
         row = {"project": "dev-tools", "name": "dev-tools-2", "status": "Up"}
         before = dict(row)
