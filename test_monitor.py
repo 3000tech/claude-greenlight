@@ -1125,6 +1125,14 @@ class Goal8_NotificationDebounce(unittest.TestCase):
         self.assertEqual(app._pending_notify, {})
         self.assertEqual(app.notifications, [])
 
+    def test_minimum_work_threshold_is_60_seconds(self):
+        """Plan 03-03 Task 3 Test 3 (D-07 preserved fix): the deliberate
+        60-second minimum-work notification threshold is unchanged by the
+        flip — this class (which exercises it end to end above) stays
+        present and green as the primary coverage; this pins the constant
+        itself so a future edit can't drift it silently."""
+        self.assertEqual(monitor.NOTIFY_MIN_WORK_SEC, 60)
+
 
 # ---------------------------------------------------------------------------
 # GOAL 9+ — Phase 2 state-file engine (shadow mode): scan_state_files()
@@ -1480,6 +1488,25 @@ class Goal11_StateFileStaleness(StateFileTestBase):
             container_info=self._container_info({"h1": "paused"}))
         self.assertEqual(s["status"], "WORKING")
 
+    def test_paused_container_session_visible_via_hostname_label_ordinary_row(self):
+        """Plan 03-03 Task 3 Test 2 (D-05): a session whose label resolves
+        ONLY through container_info['hostname_to_label'] — sessionid_to_label
+        doesn't know it, because docker exec can't reach a paused container
+        — still appears in the returned list as an ordinary row: status,
+        dot_color and rank are drawn from the same set a non-paused waiting
+        record produces (the Goal9_StateFileVerdicts baseline), no value or
+        color unique to paused rows. Discretionary choice per CONTEXT.md:
+        normal row, not dimmed — the least-surprising reading of "no new
+        colors, no new notification types."""
+        self._write_state("a", state="waiting", hostname="h1")
+        container_info = {
+            "hostname_to_label": {"h1": "myproj"},
+            "hostname_to_status": {"h1": "paused"},
+        }
+        [s] = monitor.scan_state_files(sessionid_to_label={}, container_info=container_info)
+        self.assertEqual(s["name"], "myproj")
+        self.assertEqual((s["status"], s["dot_color"], s["rank"]), ("WAITING", "#4ade80", 1))
+
     def test_fallback_evidence_comes_from_passed_legacy_list_not_fresh_io(self):
         """No second jsonl read or lock-file stat: repoint PROJECTS_DIR
         and WORKING_LOCK_DIR at paths that don't exist, pass an explicit
@@ -1728,6 +1755,20 @@ class Goal6e_AliasKeyParityAcrossEngines(unittest.TestCase):
         self._write_state("a", hostname="c1")
         [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"}, legacy_sessions=[])
         self.assertEqual(s["alias_key"], "host:c1")
+
+    def test_sessionid_rotation_keeps_same_alias_key_on_state_files(self):
+        """Plan 03-03 Task 3 Test 1 (D-07, the one confirmed Goal6d gap):
+        the state-file equivalent of test_sessionid_rotation_keeps_same_alias_key
+        — two state records with DIFFERENT session ids (a /clear rotation)
+        but the SAME container hostname resolve to the same alias key, so a
+        label set before the rotation survives it."""
+        self._write_state("s1", hostname="c1")
+        self._write_state("s2", hostname="c1")
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"s1": "L", "s2": "L"}, legacy_sessions=[])
+        self.assertEqual({s["key"] for s in sessions}, {"s1", "s2"})
+        alias_keys = {s["alias_key"] for s in sessions}
+        self.assertEqual(alias_keys, {"host:c1"})
 
     def test_state_file_row_without_hostname_falls_back_to_session_id(self):
         self._write_state("a", hostname=None)
@@ -2058,6 +2099,23 @@ class Goal20_RenderSeamFlip(StateFileTestBase):
     def test_absent_state_dir_and_empty_legacy_returns_empty_list_no_raise(self):
         monitor.STATE_DIR = self.root / "does-not-exist"
         self.assertEqual(monitor.scan_state_files(legacy_sessions=[]), [])
+
+    def test_one_state_file_alone_yields_exactly_one_row(self):
+        """Plan 03-03 Task 3 Test 5 (edge, empty/single): a single state
+        file with no legacy sessions yields exactly one row."""
+        self._write_state("a")
+        sessions = monitor.scan_state_files(sessionid_to_label={"a": "L"}, legacy_sessions=[])
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["key"], "a")
+
+    def test_one_legacy_session_alone_yields_exactly_one_row(self):
+        """Plan 03-03 Task 3 Test 5 (edge, empty/single): no state files,
+        one legacy session, yields exactly one row (the bridge)."""
+        sessions = monitor.scan_state_files(
+            legacy_sessions=[{"key": "b", "session_id": "b", "name": "L", "mtime": time.time()}])
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["key"], "b")
+        self.assertTrue(sessions[0].get("legacy_origin"))
 
     def test_equal_sort_keys_keep_input_order_stable(self):
         self._write_state("b")
