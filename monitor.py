@@ -88,6 +88,13 @@ STATE_PROMPT_STALE_SEC = 90
 # (RESEARCH Pitfall 10). 24h is far past MAX_AGE_SEC's one-hour visibility
 # window, so pruning can never remove a file the engine would still show.
 STATE_PRUNE_AGE_SEC = 86400
+# WR-04 clock-skew guard: how far `ts_ms`-derived age is allowed to
+# under-report the filesystem-mtime-derived age before `_state_record_age`
+# stops trusting `ts_ms` and falls back to `mtime`. Generous (a few
+# minutes) so ordinary write-then-stat scheduling jitter never trips it —
+# this only guards against a container clock running noticeably AHEAD of
+# the host, the dangerous direction (see `_state_record_age`).
+STATE_CLOCK_SKEW_GUARD_SEC = 300
 # SessionEnd tombstone marker suffix (D-06): hooks/state-writer.sh drops a
 # zero-byte "<session_id>.ended" file alongside removing the state file, so
 # a cleanly-ended session's ghost jsonl row can never resurrect through the
@@ -543,10 +550,30 @@ def _state_record_age(obj: dict, mtime: float, now: float) -> float:
     trustworthy (it can't be corrupted by a half-written record, since the
     writer's tmp+rename only ever commits a complete file) but `ts_ms` is
     the more precise signal when present and well-formed.
+
+    WR-04 clock-skew guard: `ts_ms` is written inside the container (its
+    own clock domain) while `mtime` and `now` are both read on the monitor
+    host. If a container's clock runs noticeably AHEAD of the host, a raw
+    `ts_ms`-derived age would under-report the true age indefinitely and a
+    genuinely dead WORKING session could never recover via the
+    heartbeat-silence fallback — exactly the "must keep telling the user
+    this session needs you now" failure the Core Value calls out. Guarded
+    one-directionally only: when `ts_ms` reports an age more than
+    STATE_CLOCK_SKEW_GUARD_SEC FRESHER than `mtime` says, distrust it and
+    fall back to `mtime`. The opposite direction (a container clock behind
+    the host, `ts_ms` reporting an OLDER age than `mtime`) is left
+    untouched — it only makes a session look stale a little early, the
+    less dangerous direction, and is also exactly how this file's own
+    staleness tests simulate an aged record without sleeping in real time
+    (a freshly-written file carrying a deliberately backdated `ts_ms`).
     """
     ts_ms = obj.get("ts_ms")
     if isinstance(ts_ms, (int, float)) and ts_ms > 0:
-        return now - (ts_ms / 1000.0)
+        ts_age = now - (ts_ms / 1000.0)
+        mtime_age = now - mtime
+        if ts_age < mtime_age - STATE_CLOCK_SKEW_GUARD_SEC:
+            return mtime_age
+        return ts_age
     return now - mtime
 
 

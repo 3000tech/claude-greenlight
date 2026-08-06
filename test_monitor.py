@@ -1387,6 +1387,23 @@ class Goal11_StateFileStaleness(StateFileTestBase):
             container_info=self._container_info({}))
         self.assertEqual(s["status"], "WAITING")
 
+    def test_working_record_with_clock_ahead_ts_ms_still_flips_stale(self):
+        """WR-04: a container clock skewed far AHEAD of the host would make
+        a raw ts_ms-derived age under-report indefinitely — a session dead
+        for well past the heartbeat window must still recover to WAITING,
+        not stay pinned WORKING forever because ts_ms claims it's fresh.
+        The file's own (host-clock) mtime is genuinely old here, same as
+        every other staleness test in this class — only ts_ms lies."""
+        old_mtime = time.time() - monitor.STATE_HEARTBEAT_STALE_SEC - 5
+        future_ts = int((time.time() + 3600) * 1000)  # container clock 1h ahead
+        self._write_state("a", state="working", hostname="h1",
+                           ts_ms=future_ts, last_event="PostToolUse",
+                           mtime=old_mtime)
+        [s] = monitor.scan_state_files(
+            sessionid_to_label={"a": "L"},
+            container_info=self._container_info({"h1": "running"}))
+        self.assertEqual(s["status"], "WAITING")
+
     # -----------------------------------------------------------------
     # D-02a/D-02b fallbacks (plan 03-02 task 2): both read a hand-built
     # `legacy_sessions` list rather than exercising scan() — these are
