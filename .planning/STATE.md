@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 3
 current_phase_name: flip-to-default-cleanup
-status: executing
-stopped_at: Completed 03-03-PLAN.md
-last_updated: "2026-08-06T12:19:52.294Z"
+status: verifying
+stopped_at: Completed 03-04-PLAN.md
+last_updated: "2026-08-06T12:31:40.831Z"
 last_activity: 2026-08-06
 last_activity_desc: Phase 3 execution started
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-06 — Phase 3 execution started
 
-Progress: [████████░░] 82%
+Progress: [█████████░] 91%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [████████░░] 82%
 | Phase 03 P01 | 13min | 2 tasks | 3 files |
 | Phase 03 P02 | 19min | 3 tasks | 5 files |
 | Phase 03 P03 | 27min | 3 tasks | 6 files |
+| Phase 03-flip-to-default-cleanup P04 | 9min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-03]: auq-lock.sh retired (D-04) — deleted from repo, no longer installed/registered by default; --remove-auq-lock teardown filters at the individual hooks[].command level (not the whole entry object), after an entry-level filter was caught deleting a co-located working-lock.sh command in a synthetic test
 - [Phase ?]: [Phase 03-03]: hooks/working-lock.sh backports state-writer.sh's session-id character allowlist (T-03-01), byte-identical in shape, before either lock branch runs
 - [Phase ?]: [Phase 03-03]: FLIP-02 closed with an evidenced deleted-class-to-replacement coverage table; requirements.mark-complete run for FLIP-01/FLIP-02 only — FLIP-03 stays Pending since its README half is explicitly plan 03-04's scope
+- [Phase 03-flip-to-default-cleanup]: [Phase 03-04]: README describes hooks as required, names the real per-session state file + working lock mechanism, and the honest degradation note names the per-session transcript fallback rather than overstating that the monitor stops reading transcripts entirely
+- [Phase 03-flip-to-default-cleanup]: [Phase 03-04]: docs/TEST-MATRIX.md and docs/RECERTIFICATION.md promoted out of .planning/ at D-10's authorized scale (one move + one short runbook); campaign machinery (per-version fixtures, automated smoke checklist) stays deferred
+- [Phase 03-flip-to-default-cleanup]: [Phase 03-04]: 03-UAT.md's Section H (D-04 needs_input parity gate) is written as blocking; the Teardown's --remove-auq-lock step depends on Section H passing first
 
 ### Pending Todos
 
@@ -147,6 +151,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T12:19:52.275Z
-Stopped at: Completed 03-03-PLAN.md
+Last session: 2026-08-06T12:31:30.509Z
+Stopped at: Completed 03-04-PLAN.md
 Resume file: None

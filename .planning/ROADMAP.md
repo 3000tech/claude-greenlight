@@ -98,7 +98,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 03-04-PLAN.md — README rewrite, TEST-MATRIX promotion into docs/ with a recertification runbook, and the 03-UAT live flip runbook (FLIP-03)
+- [x] 03-04-PLAN.md — README rewrite, TEST-MATRIX promotion into docs/ with a recertification runbook, and the 03-UAT live flip runbook (FLIP-03)
 
 ## Progress
 
