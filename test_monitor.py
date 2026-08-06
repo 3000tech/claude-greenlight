@@ -103,111 +103,32 @@ def _async_agent_launch(tool_use_id: str, agent_id: str,
     return [use, res]
 
 
-def _bg_shell_start(shell_id: str, tool_use_id: str,
-                    session_id: str = "s1") -> list[str]:
-    """Two records: the assistant's Bash tool_use with run_in_background=True,
-    and the immediate tool_result announcing the shell is running in the
-    background. shell_tracker.has_active_shells() anchors on a brace-free
-    span between "type" and "content" in the tool_result dict, so the key
-    order below (type, tool_use_id, content — no nested object in between)
-    must be preserved."""
-    use = _line({
-        "type": "assistant",
-        "sessionId": session_id,
-        "message": {"content": [{
-            "type": "tool_use", "id": tool_use_id, "name": "Bash",
-            "input": {"run_in_background": True, "command": "npm run dev"},
-        }]},
-    })
-    result_text = (
-        f"Command running in background with ID: {shell_id}. "
-        "Output is being written to: /tmp/shell.out"
-    )
-    res = _line({
+def _monitor_started_result(tool_use_id: str, task_id: str,
+                            session_id: str = "s1") -> str:
+    """The synchronous tool_result Claude Code emits when a Monitor tool
+    task starts watching — wires tool_use_id -> task_id the same way
+    shell_tracker.count_active_monitors's MONITOR_RESULT_RE anchor did,
+    now ported into monitor.py's _peek_agent_activity()."""
+    return _line({
         "type": "user",
         "sessionId": session_id,
         "message": {"content": [{
             "type": "tool_result", "tool_use_id": tool_use_id,
-            "content": result_text,
+            "content": f"Monitor started (task {task_id}) watching for a match",
         }]},
     })
-    return [use, res]
 
 
-def _manual_bg_shell_start(shell_id: str, tool_use_id: str,
-                           session_id: str = "s1") -> list[str]:
-    """Two records mirroring a live Ctrl+B capture (2026-07-31, cc 2.1.220+):
-    the assistant's Bash tool_use with a PLAIN foreground input (no
-    run_in_background key — the command started in the foreground and the
-    user promoted it), and the tool_result announcing the manual background
-    marker. The tool_result's message.content keys are written in the live
-    order — tool_use_id, then type, then content, then is_error — to prove
-    shell_tracker.BG_START_RE's anchor tolerates tool_use_id preceding type
-    (the anchor only constrains the brace-free span from type to content).
-    Carries the live toolUseResult shape (backgroundTaskId/backgroundedByUser)
-    as documentation of intent, even though the parser doesn't key off it.
-    Like _bg_shell_start, the type key must precede the content key with no
-    nested object in between, or the fixture silently stops matching."""
-    use = _line({
+def _task_stop(task_id: str, tool_id: str = "tu_stop",
+              session_id: str = "s1") -> str:
+    """A TaskStop tool_use terminating a Monitor (or bg shell) task_id."""
+    return _line({
         "type": "assistant",
         "sessionId": session_id,
         "message": {"content": [{
-            "type": "tool_use", "id": tool_use_id, "name": "Bash",
-            "input": {"command": "npm run dev"},
+            "type": "tool_use", "id": tool_id, "name": "TaskStop",
+            "input": {"task_id": task_id},
         }]},
-    })
-    result_text = (
-        f"Command was manually backgrounded by user with ID: {shell_id}. "
-        "Output is being written to: "
-        f"/tmp/claude-1000/-workspace/session-uuid/tasks/{shell_id}.output"
-    )
-    res = _line({
-        "type": "user",
-        "sessionId": session_id,
-        "message": {"content": [{
-            "tool_use_id": tool_use_id,
-            "type": "tool_result",
-            "content": result_text,
-            "is_error": False,
-        }]},
-        "toolUseResult": {
-            "stdout": "",
-            "stderr": "",
-            "interrupted": False,
-            "isImage": False,
-            "noOutputExpected": False,
-            "backgroundTaskId": shell_id,
-            "backgroundedByUser": True,
-        },
-    })
-    return [use, res]
-
-
-def _bg_task_notification(task_id: str, tool_use_id: str, status: str = "completed",
-                          session_id: str = "s1") -> str:
-    """Live completion shape for a backgrounded shell: a `queue-operation`
-    record (not a user message) whose `content` string holds the
-    <task-notification> block, with <tool-use-id> and <output-file> lines
-    between the task-id and the status — reproducing the ~180-character gap
-    the real notification carries, so a future regression in TASK_NOTIF_RE's
-    gap allowance would be caught here."""
-    output_path = (
-        f"/tmp/claude-1000/-workspace/session-uuid/tasks/{task_id}.output"
-    )
-    body = (
-        "<task-notification>\n"
-        f"<task-id>{task_id}</task-id>\n"
-        f"<tool-use-id>{tool_use_id}</tool-use-id>\n"
-        f"<output-file>{output_path}</output-file>\n"
-        f"<status>{status}</status>\n"
-        "<summary>done</summary>\n"
-        "</task-notification>"
-    )
-    return _line({
-        "type": "queue-operation",
-        "operation": "task-notification",
-        "sessionId": session_id,
-        "content": body,
     })
 
 
@@ -434,124 +355,13 @@ class Goal2_ClaudeActivelyWorking(MonitorTestBase):
 
 
 # ---------------------------------------------------------------------------
-# GOAL 2h — A live background shell is badge-only: it never pins WORKING by
-# itself, at any age. Grey during a re-invoked turn comes from case-13
-# (UserPromptSubmit → working-lock), not from the shell itself. Monitor/
-# agent/async-agent pins are unaffected.
+# GOAL 2h/2i (shell_tracker.py, D-03) retired at the flip: the bg-shell/
+# Ctrl+B badge parser is deleted along with its two test classes. The
+# user-facing guarantee they protected ("a live background shell never pins
+# WORKING by itself") is re-asserted on state-file fixtures instead — see
+# Goal21_UnifiedBadge below, which proves the badge is driven solely by the
+# hook-captured background_tasks_count and never by status.
 # ---------------------------------------------------------------------------
-
-class Goal2h_BgShellBadgeOnly(MonitorTestBase):
-    """A background shell (dev server, build, anything started with
-    run_in_background) must never pin a session grey by itself — once the
-    turn has ended, the session goes WAITING immediately regardless of the
-    shell's age, while the bg badge keeps reporting the running process."""
-
-    def test_fresh_bg_shell_ended_turn_is_waiting_badge_true(self):
-        """G2h-1: fresh jsonl, live bg shell, ended turn → WAITING (not held
-        grey by the shell), bg badge still True. The fixture's only tail
-        signal is a plain assistant text block — no tool_result/thinking/
-        tool_use — so nothing OTHER than the (now-removed) bg pin could have
-        held this grey."""
-        fresh = time.time() - 5
-        _write_session(self.root, "-workspace-app", [
-            *_bg_shell_start("shell_1", "tu_bg_start"),
-            _assistant([_text_block("dev server started")]),
-        ], mtime=fresh)
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertEqual(s["status"], "WAITING")
-        self.assertTrue(s["bg"])
-
-    def test_stale_bg_shell_ended_turn_is_waiting_badge_true(self):
-        """G2h-2: same as G2h-1 but with an old mtime — the shell being
-        long-lived changes nothing, since it was never a pin in the first
-        place. Confirms there's no lingering age dependency."""
-        stale = time.time() - 1800  # 30 min, well inside MAX_AGE_SEC
-        _write_session(self.root, "-workspace-app", [
-            *_bg_shell_start("shell_1", "tu_bg_start"),
-            _assistant([_text_block("dev server started")]),
-        ], mtime=stale)
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertEqual(s["status"], "WAITING")
-        self.assertTrue(s["bg"])
-
-    def test_async_agent_in_flight_still_working_bg_pin_removal_scoped(self):
-        """G2h-3: removing the bg-shell pin must not touch the async-agent
-        pin — an async agent still in flight (no completion notification)
-        keeps the session WORKING, at any age."""
-        stale = time.time() - 1800
-        _write_session(self.root, "-workspace-app", [
-            *_async_agent_launch("tu_dispatch", "a63460d33faaf2a4a"),
-            _assistant([_text_block("Wave 2 dispatched. Waiting for completion.")]),
-        ], mtime=stale)
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertEqual(s["status"], "WORKING")
-
-
-# ---------------------------------------------------------------------------
-# GOAL 2i — A shell the user backgrounded by hand (Ctrl+B) is detected exactly
-# like one Claude backgrounded itself. Ground truth: live jsonl capture,
-# 2026-07-31, cc 2.1.220+.
-# ---------------------------------------------------------------------------
-
-class Goal2i_ManualBgShellDetected(MonitorTestBase):
-    """A shell the user backgrounded by hand must be reported by the ⚙ badge
-    exactly like one Claude backgrounded itself — the user cannot be expected
-    to know which code path put a running shell into the background, so the
-    monitor's answer to "is something still running?" must not depend on it."""
-
-    def test_manual_bg_shell_lights_badge_stays_waiting(self):
-        """G2i-1: manual-start marker + ended turn → bg badge lights (True)
-        and status is WAITING, not WORKING — the badge-only invariant from
-        quick 260731-an2 rev.2 survives the widened start detection. The only
-        tail signal after the start marker is a plain assistant text block,
-        so nothing else could account for either assertion."""
-        _write_session(self.root, "-workspace-app", [
-            *_manual_bg_shell_start("b0rui8k6c", "tu_manual_start"),
-            _assistant([_text_block("noted")]),
-        ])
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertEqual(s["status"], "WAITING")
-        self.assertTrue(s["bg"])
-
-    def test_manual_bg_shell_completion_clears_badge(self):
-        """G2i-2: the manually-backgrounded shell's completion notification
-        clears the badge with no new termination code — TASK_NOTIF_RE already
-        matches any task-id regardless of which marker started it. Uses the
-        live `queue-operation` shape with the intervening tool-use-id and
-        output-file lines that separate the real gap from the pattern's
-        allowance."""
-        _write_session(self.root, "-workspace-app", [
-            *_manual_bg_shell_start("b0rui8k6c", "tu_manual_start"),
-            _bg_task_notification("b0rui8k6c", "tu_manual_start"),
-            _assistant([_text_block("shell finished")]),
-        ])
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertFalse(s["bg"])
-
-    def test_escaped_echo_of_manual_marker_does_not_spoof_badge(self):
-        """G2i-3: an escaped grep/cat echo of a jsonl containing the manual
-        marker must NOT light the badge. Observed live in the same session as
-        the real marker: a later tool_result whose content is itself a
-        fragment of jsonl text with every inner quote escaped
-        (\\"type\\":\\"tool_result\\"...), which cannot satisfy a pattern
-        requiring unescaped quotes immediately around the type/content keys.
-        This is the concrete reason the anchoring exists — if this test fails,
-        the anchoring was relaxed and that is the bug, not this test."""
-        escaped_echo = (
-            '{"type": "user", "sessionId": "s1", "message": {"content": [{'
-            '"tool_use_id": "tu_grep", "type": "tool_result", '
-            '"content": "grep output:\\n{\\"tool_use_id\\":\\"tu_x\\",\\"type\\":\\"tool_result\\",'
-            '\\"content\\":\\"Command was manually backgrounded by user with ID: b0rui8k6c. '
-            'Output is being written to: /tmp/x.output\\"}", '
-            '"is_error": false}]}}'
-        )
-        _write_session(self.root, "-workspace-app", [
-            _assistant([_text_block("checking logs")]),
-            escaped_echo,
-            _assistant([_text_block("nothing new")]),
-        ])
-        [s] = self._scan({"-workspace-app": "app"})
-        self.assertFalse(s["bg"])
 
 
 # ---------------------------------------------------------------------------
@@ -1386,9 +1196,12 @@ class Goal9_StateFileVerdicts(StateFileTestBase):
         [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
         scan_keys = {
             "key", "name", "session_id", "encoded_dir", "dot", "dot_color",
-            "bg", "monitors", "agents", "status", "rank", "age", "mtime", "action",
+            "status", "rank", "age", "mtime", "action",
         }
         self.assertTrue(scan_keys.issubset(s.keys()), s.keys())
+        # D-03: shell_tracker's counters are gone from both engines' rows —
+        # the badge's only source is background_tasks_count.
+        self.assertEqual(set(s) & {"bg", "monitors", "agents"}, set())
 
 
 class Goal10_StateFileRobustness(StateFileTestBase):
@@ -2051,6 +1864,114 @@ class Goal20_RenderSeamFlip(StateFileTestBase):
             sessions = monitor.scan_state_files(
                 sessionid_to_label={"a": "L", "b": "L"}, legacy_sessions=[])
         self.assertEqual([s["session_id"] for s in sessions], ["b", "a"])
+
+
+# ---------------------------------------------------------------------------
+# GOAL 21 — One unified badge, sourced only from the hook-captured
+# background_tasks_count (D-03). Re-asserts the guarantee Goal2h/Goal2i used
+# to protect ("a live background shell never pins WORKING by itself") on
+# state-file fixtures, since the jsonl-based bg-shell parser that carried it
+# is gone.
+# ---------------------------------------------------------------------------
+
+class Goal21_UnifiedBadge(StateFileTestBase):
+
+    def test_badge_text_empty_for_zero_and_none(self):
+        self.assertEqual(monitor.bg_badge_text(0), "")
+        self.assertEqual(monitor.bg_badge_text(None), "")
+
+    def test_badge_text_glyph_only_for_one_glyph_plus_count_above(self):
+        one = monitor.bg_badge_text(1)
+        self.assertEqual(len(one), 1)
+        three = monitor.bg_badge_text(3)
+        self.assertTrue(three.endswith("3"))
+        self.assertNotEqual(three, one)
+
+    def test_bg_count_drives_badge_text_status_stays_independent(self):
+        """Test 3: background_tasks_count=2 produces a non-empty badge; the
+        row's status is whatever the record's `state` maps to — the count
+        never changes it."""
+        self._write_state("a", state="working", background_tasks_count=2)
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WORKING")
+        self.assertNotEqual(monitor.bg_badge_text(s["background_tasks_count"]), "")
+
+    def test_bg_count_never_pins_working(self):
+        """Test 4: state='waiting' + background_tasks_count=5 still yields
+        WAITING — the bg count is badge-only, exactly like the deleted
+        Goal2h/Goal2i guarantee, now proved on the hook-derived engine."""
+        self._write_state("a", state="waiting", background_tasks_count=5)
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual(s["status"], "WAITING")
+        self.assertNotEqual(monitor.bg_badge_text(s["background_tasks_count"]), "")
+
+
+# ---------------------------------------------------------------------------
+# GOAL 22 — The trimmed in-file agent-activity peek (D-02b evidence),
+# absorbed from shell_tracker's count_active_monitors/count_active_agents/
+# count_active_async_agents into one single-read helper.
+# ---------------------------------------------------------------------------
+
+class Goal22_AgentActivityPeek(MonitorTestBase):
+
+    def test_unterminated_monitor_task_is_agent_activity_true(self):
+        """Test 5 (first half): a started-but-not-terminated Monitor task
+        yields agent_activity True. toolu_-prefixed id matches the
+        MONITOR_USE_RE/MONITOR_RESULT_RE anchors ported from shell_tracker
+        (real Anthropic tool_use ids carry this prefix)."""
+        _write_session(self.root, "-workspace-app", [
+            _assistant([_tool_use("Monitor", "toolu_mon1")]),
+            _monitor_started_result("toolu_mon1", "task_mon1"),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertTrue(s["agent_activity"])
+
+    def test_task_stop_for_same_task_id_clears_agent_activity(self):
+        """Test 5 (second half): a TaskStop for the same task_id flips it
+        to False."""
+        _write_session(self.root, "-workspace-app", [
+            _assistant([_tool_use("Monitor", "toolu_mon1")]),
+            _monitor_started_result("toolu_mon1", "task_mon1"),
+            _task_stop("task_mon1"),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertFalse(s["agent_activity"])
+
+    def test_unmatched_foreground_agent_is_agent_activity_true(self):
+        """Test 6 (first half): an in-flight foreground Agent tool_use with
+        no matching tool_result yields agent_activity True."""
+        _write_session(self.root, "-workspace-app", [
+            _assistant([_tool_use("Agent", "toolu_agentlive")]),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertTrue(s["agent_activity"])
+
+    def test_matching_tool_result_clears_agent_activity(self):
+        """Test 6 (second half): adding the matching tool_result flips it
+        to False."""
+        _write_session(self.root, "-workspace-app", [
+            _assistant([_tool_use("Agent", "toolu_agentlive")]),
+            _user_tool_result("toolu_agentlive"),
+        ])
+        [s] = self._scan({"-workspace-app": "app"})
+        self.assertFalse(s["agent_activity"])
+
+
+# ---------------------------------------------------------------------------
+# GOAL 23 — shell_tracker.py is fully deleted (D-03); monitor.py carries no
+# residue of its symbols and imports cleanly without it.
+# ---------------------------------------------------------------------------
+
+class Goal23_ShellTrackerRemoved(unittest.TestCase):
+
+    def test_shell_tracker_module_is_gone(self):
+        with self.assertRaises(ModuleNotFoundError):
+            import shell_tracker  # noqa: F401
+
+    def test_monitor_has_no_shell_tracker_symbols(self):
+        for name in ("has_active_shells", "count_active_monitors",
+                     "count_active_agents", "count_active_async_agents"):
+            self.assertFalse(hasattr(monitor, name), name)
 
 
 if __name__ == "__main__":

@@ -24,13 +24,6 @@ import time
 import tkinter as tk
 from pathlib import Path
 
-from shell_tracker import (
-    count_active_agents,
-    count_active_async_agents,
-    count_active_monitors,
-    has_active_shells,
-)
-
 SINGLETON_PORT = 52731  # loopback bind used as a single-instance lock (POSIX)
 _SINGLETON_HANDLE = None  # Windows mutex HANDLE or POSIX socket
 
@@ -664,9 +657,6 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 "encoded_dir": "",
                 "dot": dot,
                 "dot_color": color,
-                "bg": bool(bg_count and bg_count > 0),
-                "monitors": 0,
-                "agents": 0,
                 "status": status,
                 "rank": rank,
                 "age": age,
@@ -712,6 +702,123 @@ def select_render_sessions(sessions: list[dict]) -> list[dict]:
     return sessions
 
 
+# --- Trimmed in-file agent-activity peek (D-02b, D-03) -------------------
+# shell_tracker.py is gone: its badge-driving detections (bg-shell start/
+# kill, the older task-wrapper status format) went with it, since the badge
+# is hook-native now (background_tasks_count). Only the Monitor/foreground-
+# Agent/async-agent evidence 02-DIVERGENCE-REVIEW carry-forward #1 named as
+# still-needed survives, absorbed here as ONE single-read peek instead of
+# three independent whole-file reads per session per tick. Patterns are
+# byte-anchored exactly as shell_tracker's were — that anchoring is what
+# stops a grep/cat echo of a jsonl (inner quotes escaped as \") from
+# spoofing a match; do not relax it.
+_PEEK_TAIL_BYTES = 10 * 1024 * 1024
+_PEEK_MONITOR_USE_RE = re.compile(
+    rb'"type"\s*:\s*"tool_use"\s*,\s*"id"\s*:\s*"(toolu_[A-Za-z0-9]+)"\s*,\s*"name"\s*:\s*"Monitor"'
+)
+_PEEK_MONITOR_RESULT_RE = re.compile(
+    rb'"tool_use_id"\s*:\s*"(toolu_[A-Za-z0-9]+)"[^{}]*?"content"\s*:\s*'
+    rb'"Monitor started \(task ([A-Za-z0-9_]+)'
+)
+_PEEK_MONITOR_PERSISTENT_RE = re.compile(
+    rb'"toolUseResult"\s*:\s*\{[^{}]*?"taskId"\s*:\s*"([A-Za-z0-9_]+)"[^{}]*?"persistent"\s*:\s*(true|false)'
+)
+_PEEK_TASK_STOP_RE = re.compile(
+    rb'"name"\s*:\s*"TaskStop".{0,500}?"task_id"\s*:\s*"([A-Za-z0-9_]+)"', re.DOTALL,
+)
+_PEEK_MONITOR_TIMEOUT_RE = re.compile(
+    rb'<task-id>([A-Za-z0-9_]+)</task-id>.{0,1500}?\[Monitor timed out', re.DOTALL,
+)
+_PEEK_TASK_NOTIF_TASKID_RE = re.compile(
+    rb'<task-notification>.{0,2000}?<task-id>([A-Za-z0-9_]+)</task-id>', re.DOTALL,
+)
+_PEEK_AGENT_USE_RE = re.compile(
+    rb'"type"\s*:\s*"tool_use"\s*,\s*"id"\s*:\s*"(toolu_[A-Za-z0-9]+)"\s*,\s*"name"\s*:\s*"Agent"'
+)
+_PEEK_TOOL_RESULT_ID_RE = re.compile(rb'"tool_use_id"\s*:\s*"(toolu_[A-Za-z0-9]+)"')
+_PEEK_ASYNC_AGENT_LAUNCH_RE = re.compile(
+    rb'Async agent launched successfully[^"]{0,200}?agentId:\s*([0-9a-f]+)'
+)
+_PEEK_TASK_NOTIF_RE = re.compile(
+    rb"<task-notification>.{0,400}?<task-id>([A-Za-z0-9_]+)</task-id>.{0,800}?<status>([a-zA-Z_]+)</status>",
+    re.DOTALL,
+)
+_PEEK_TERMINAL = {"completed", "failed", "cancelled", "killed", "timeout"}
+
+
+def _peek_agent_activity(path: Path) -> bool:
+    """True when a Monitor tool task, foreground Agent call or async agent
+    launch is started-but-not-terminated in `path`'s trailing window.
+
+    Reads the file exactly once and derives all three signals from that one
+    buffer — the module this replaces performed three independent whole-file
+    reads per session per tick (T-03-09). OSError (missing/vanished file)
+    returns the safe default, False, matching shell_tracker's behaviour.
+    """
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size == 0:
+                return False
+            read_size = min(_PEEK_TAIL_BYTES, size)
+            f.seek(size - read_size)
+            data = f.read(read_size)
+    except OSError:
+        return False
+
+    # Monitor tasks: started only once a tool_use is confirmed by its own
+    # "Monitor started (task ...)" tool_result; terminated via TaskStop, a
+    # "[Monitor timed out" event, or (persistent=false only) the match event
+    # itself, which Claude Code writes no explicit terminator for.
+    monitor_use_ids = {m.group(1) for m in _PEEK_MONITOR_USE_RE.finditer(data)}
+    monitor_started: set[bytes] = set()
+    for m in _PEEK_MONITOR_RESULT_RE.finditer(data):
+        if m.group(1) in monitor_use_ids:
+            monitor_started.add(m.group(2))
+    if monitor_started:
+        non_persistent = {
+            m.group(1) for m in _PEEK_MONITOR_PERSISTENT_RE.finditer(data)
+            if m.group(2) == b"false"
+        }
+        monitor_terminated: set[bytes] = set()
+        for m in _PEEK_TASK_STOP_RE.finditer(data):
+            monitor_terminated.add(m.group(1))
+        for m in _PEEK_MONITOR_TIMEOUT_RE.finditer(data):
+            monitor_terminated.add(m.group(1))
+        for m in _PEEK_TASK_NOTIF_TASKID_RE.finditer(data):
+            tid = m.group(1)
+            if tid in non_persistent:
+                monitor_terminated.add(tid)
+        if monitor_started - monitor_terminated:
+            return True
+
+    # Foreground Agent: blocks the parent turn until its tool_result lands.
+    agent_use_ids = {m.group(1) for m in _PEEK_AGENT_USE_RE.finditer(data)}
+    if agent_use_ids:
+        agent_completed = {
+            m.group(1) for m in _PEEK_TOOL_RESULT_ID_RE.finditer(data)
+            if m.group(1) in agent_use_ids
+        }
+        if agent_use_ids - agent_completed:
+            return True
+
+    # Async agent (Agent run_in_background=True): its dispatch tool_result
+    # returns immediately, so completion is a later <task-notification>
+    # carrying the launched agentId with a terminal <status>.
+    launched = {m.group(1) for m in _PEEK_ASYNC_AGENT_LAUNCH_RE.finditer(data)}
+    if launched:
+        ended: set[bytes] = set()
+        for m in _PEEK_TASK_NOTIF_RE.finditer(data):
+            tid, status = m.group(1), m.group(2).lower()
+            if tid in launched and status.decode("ascii", errors="replace") in _PEEK_TERMINAL:
+                ended.add(tid)
+        if launched - ended:
+            return True
+
+    return False
+
+
 def scan(label_map: dict[str, str] | None = None,
          sessionid_to_label: dict[str, str] | None = None,
          container_info: dict | None = None,
@@ -742,27 +849,24 @@ def scan(label_map: dict[str, str] | None = None,
     for proj_dir, latest, latest_mtime in candidates:
         age = now - latest_mtime
         last_line = tail_last_line(latest)
-        has_bg = has_active_shells(latest)
-        monitors = count_active_monitors(latest)
-        agents = count_active_agents(latest)
-        async_agents = count_active_async_agents(latest)
+        agent_activity = _peek_agent_activity(latest)
         # Default GREEN (waiting). Flip to GREY only when evidence is
-        # unambiguous: a foreground Agent/Monitor is in flight, the assistant
-        # tail proves Claude is mid-turn (thinking block or tool_use still
-        # waiting on its tool_result), or a fresh `user` tail means Claude
-        # owes a response and the file is still being written. Stale user
-        # tails (without new events) go GREEN so interrupted/abandoned
-        # sessions don't get stuck grey forever — but tool_result tails get a
-        # much longer grace window because the follow-up turn can legitimately
-        # take many minutes (slow bash, deep thinking, long web research). A
-        # live background shell (has_bg) does NOT pin grey — it is badge-only
-        # (the row's `bg` field below). A bg shell is not evidence Claude owes
-        # anyone a reply; when its finite task finishes and re-invokes Claude,
-        # that re-invocation emits a fresh UserPromptSubmit (TEST-MATRIX case
-        # 13) and grey comes from the working-lock, not from the shell itself.
-        # Accepted trade-off: a turn that ends while a build/test/install bg
-        # task is still running shows green immediately (notification fires),
-        # with the badge reporting the still-running process.
+        # unambiguous: a foreground Agent/Monitor/async agent is in flight
+        # (agent_activity), the assistant tail proves Claude is mid-turn
+        # (thinking block or tool_use still waiting on its tool_result), or a
+        # fresh `user` tail means Claude owes a response and the file is
+        # still being written. Stale user tails (without new events) go
+        # GREEN so interrupted/abandoned sessions don't get stuck grey
+        # forever — but tool_result tails get a much longer grace window
+        # because the follow-up turn can legitimately take many minutes
+        # (slow bash, deep thinking, long web research). A live background
+        # shell is NOT evidence here at all post-flip (D-03): the badge is
+        # hook-native (background_tasks_count, read by scan_state_files()),
+        # and bg-shell detection was shell_tracker-only — it never belonged
+        # in this WORKING chain to begin with, so its removal from `scan()`
+        # changes nothing here. When a bg task finishes and re-invokes
+        # Claude, that re-invocation emits a fresh UserPromptSubmit
+        # (TEST-MATRIX case 13) and grey comes from the working-lock.
         tail_kind = user_tail_kind(last_line)
         if tail_kind == "tool_result":
             fresh_user_tail = age < TOOL_RESULT_WORKING_SEC
@@ -813,16 +917,9 @@ def scan(label_map: dict[str, str] | None = None,
                     working_locked = False
             except OSError:
                 pass
-        # has_bg is deliberately absent from this chain — a live background
-        # shell is badge-only (see the row's `bg` field below) and must never
-        # pin WORKING by itself. A foreground Agent genuinely blocks the turn,
-        # Monitor tasks terminate via TaskStop or their own timeout, and async
-        # agents end with a task-notification — those three keep their pins
-        # unchanged; only the unbounded-lifetime bg-shell signal was dropped.
         if auq_locked:
             status, dot, color, rank = "WAITING", "●", "#4ade80", 1
-        elif (agents > 0 or async_agents > 0 or monitors > 0
-                or is_certainly_working(last_line) or fresh_user_tail
+        elif (agent_activity or is_certainly_working(last_line) or fresh_user_tail
                 or working_locked):
             status, dot, color, rank = "WORKING", "●", "#666", 2
         else:
@@ -852,9 +949,7 @@ def scan(label_map: dict[str, str] | None = None,
             "encoded_dir": proj_dir.name,
             "dot": dot,
             "dot_color": color,
-            "bg": has_bg,
-            "monitors": monitors,
-            "agents": agents,
+            "agent_activity": agent_activity,
             "status": status,
             "rank": rank,
             "age": age,
@@ -939,6 +1034,31 @@ def session_display_text(s: dict) -> str:
     "" — for any row a future producer forgets to stamp.
     """
     return s.get("display_name") or s.get("name") or ""
+
+
+def bg_badge_text(count: int | float | None) -> str:
+    """Display text for the single unified background-task badge (D-03):
+    supersedes the two-badge pair (gold bg-shell gear + teal Monitor count)
+    with one, sourced only from the hook-captured `background_tasks_count`
+    — never from jsonl parsing.
+
+    Empty string for a falsy/absent/zero count (no badge shown at all); the
+    bare glyph for exactly 1; the glyph followed by the number for anything
+    greater. Lives at module level (display-only, tkinter-free) for the
+    same reason `container_display_name`/`session_display_name` do — unit-
+    testable without constructing MonitorApp.
+    """
+    if not count:
+        return ""
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if n == 1:
+        return "◉"
+    return f"◉{n}"
 
 
 def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict, dict[str, str]]:
@@ -1444,7 +1564,7 @@ class MonitorApp:
             self._edit_alias(k)
 
         for slot in ("frame", "top", "inner", "dot", "name", "alias",
-                     "bg", "monitor", "age", "action"):
+                     "badge", "age", "action"):
             w = row.get(slot)
             if w is None:
                 continue
@@ -1992,12 +2112,9 @@ class MonitorApp:
             alias_txt = self._session_aliases.get(self._alias_key(key), "")
             if row["alias"].cget("text") != alias_txt:
                 row["alias"].config(text=alias_txt)
-            bg_txt = "⚙" if s["bg"] else ""
-            if row["bg"].cget("text") != bg_txt:
-                row["bg"].config(text=bg_txt)
-            mon_txt = "" if not s["monitors"] else ("◉" if s["monitors"] == 1 else f"◉{s['monitors']}")
-            if row["monitor"].cget("text") != mon_txt:
-                row["monitor"].config(text=mon_txt)
+            badge_txt = bg_badge_text(s.get("background_tasks_count"))
+            if row["badge"].cget("text") != badge_txt:
+                row["badge"].config(text=badge_txt)
             if row["age"].cget("text") != age_txt:
                 row["age"].config(text=age_txt)
             if row["action"].cget("text") != s["action"]:
@@ -2043,12 +2160,9 @@ class MonitorApp:
             alias_txt = self._session_aliases.get(self._alias_key(key), "")
             if chip["alias"].cget("text") != alias_txt:
                 chip["alias"].config(text=alias_txt)
-            bg_txt = "⚙" if s["bg"] else ""
-            if chip["bg"].cget("text") != bg_txt:
-                chip["bg"].config(text=bg_txt)
-            mon_txt = "" if not s["monitors"] else ("◉" if s["monitors"] == 1 else f"◉{s['monitors']}")
-            if chip["monitor"].cget("text") != mon_txt:
-                chip["monitor"].config(text=mon_txt)
+            badge_txt = bg_badge_text(s.get("background_tasks_count"))
+            if chip["badge"].cget("text") != badge_txt:
+                chip["badge"].config(text=badge_txt)
         for key in list(self._compact_chips):
             if key not in seen:
                 self._compact_chips[key]["frame"].destroy()
@@ -2084,14 +2198,11 @@ class MonitorApp:
         alias = tk.Label(inner, text="", bg="#242424", fg="#e0a458",
                          font=("Segoe UI", 10, "bold"))
         alias.pack(side="left", padx=(3, 0))
-        bg_badge = tk.Label(inner, text="", bg="#242424", fg="#c8a24a",
-                            font=("Segoe UI", 10))
-        bg_badge.pack(side="left", padx=(3, 0))
-        mon_badge = tk.Label(inner, text="", bg="#242424", fg="#5fbfb0",
-                             font=("Segoe UI", 10))
-        mon_badge.pack(side="left", padx=(3, 0))
+        badge = tk.Label(inner, text="", bg="#242424", fg="#5fbfb0",
+                         font=("Segoe UI", 10))
+        badge.pack(side="left", padx=(3, 0))
         return {"frame": frame, "inner": inner, "dot": dot, "name": name,
-                "alias": alias, "bg": bg_badge, "monitor": mon_badge}
+                "alias": alias, "badge": badge}
 
     def _make_container_row(self) -> dict:
         frame = tk.Frame(self.docker_section, bg="#1f2a1f")
@@ -2124,12 +2235,9 @@ class MonitorApp:
         alias = tk.Label(top, text="", bg="#242424", fg="#e0a458",
                          font=("Segoe UI", 11, "bold"))
         alias.pack(side="left", padx=(5, 0))
-        bg_badge = tk.Label(top, text="", bg="#242424", fg="#c8a24a",
-                            font=("Segoe UI", 11))
-        bg_badge.pack(side="left", padx=(4, 0))
-        mon_badge = tk.Label(top, text="", bg="#242424", fg="#5fbfb0",
-                             font=("Segoe UI", 11))
-        mon_badge.pack(side="left", padx=(4, 0))
+        badge = tk.Label(top, text="", bg="#242424", fg="#5fbfb0",
+                         font=("Segoe UI", 11))
+        badge.pack(side="left", padx=(4, 0))
         age = tk.Label(top, text="", bg="#242424", fg="#888",
                        font=("Segoe UI", 10))
         age.pack(side="right")
@@ -2137,7 +2245,7 @@ class MonitorApp:
                           font=("Segoe UI", 10), anchor="w")
         action.pack(fill="x", padx=30, pady=(0, 5))
         return {"frame": frame, "top": top, "dot": dot, "name": name,
-                "alias": alias, "bg": bg_badge, "monitor": mon_badge,
+                "alias": alias, "badge": badge,
                 "age": age, "action": action}
 
     def run(self) -> None:
