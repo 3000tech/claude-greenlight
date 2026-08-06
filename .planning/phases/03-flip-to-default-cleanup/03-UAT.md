@@ -277,10 +277,10 @@ explicitly, not left blank — a blank cell is indistinguishable from a section 
 
 | Section | Date | CC version | Outcome |
 |---|---|---|---|
-| Setup (registration counts) | | | |
-| A — the flip is live | | | |
-| B — Esc-interrupt recovery | | | |
-| C — hook-silence pin | | | |
+| Setup (registration counts) | 2026-08-06 | 2.1.223 | PASS — working-lock 3, state-writer 10, event-logger 24; auq-lock 4 = the anticipated pre-flip existing-install case (preserved per WR-02, Section H gates removal); all state files parse, this session's file refreshing live; monitor.bat started flag-free; bonus: the known orphan tmp `c1eb55f7-….json.tmp.13252` auto-swept on the flipped monitor's first tick (D-08 observed live) |
+| A — the flip is live | 2026-08-06 | 2.1.223 | PASS — full cycle on the working session (cd46dfa1): grey through a 70s foreground tool (PreToolUse 13:41:49 → PostToolUse duration 69.9s), green at Stop 13:43:07 with the >60s notification firing, grey again on the next UserPromptSubmit; overlay matched monitor-state at every observed point; hook-events trail confirms each transition. Bonus: a user Esc at 13:43:3x left no hook event (known silence, Section B's subject) |
+| B — Esc-interrupt recovery | 2026-08-06 | 2.1.223 | PASS — 600s-sleep Bash launched 13:44:18Z, user Esc'd mid-run (zero hook events, silence confirmed), overlay GREEN with notification before the user's reply at 13:48:40Z (elapsed 4m22s < the 600s heartbeat window, so only the ~90s D-02a path can explain the green); user confirmed green + notification observed live |
+| C — hook-silence pin | 2026-08-06 | 2.1.223 | PASS (thin but real crossing) — foreground Agent (a13aa08e) ran a single 690s Bash: last state write PostToolBatch 13:50:11Z, next write 14:00:27Z → 616s staleness, ~16s (~3 ticks) past the 600s boundary with the D-02b pin holding WORKING via the in-flight foreground-Agent evidence. A failed pin would have produced 3 WAITING ticks > the 2-tick debounce → toast at ~14:00:21; user confirmed no notification fired during the window. Note: harness moved the tool to the agent's background at its own 600s cap — irrelevant to the state-file silence being measured |
 | D — the bridge | | | |
 | E — ghost suppression | | | |
 | F — paused container | | | |
@@ -299,19 +299,19 @@ on the Windows machine. -->
 
 ### 1. Setup — registration counts, state files writing, monitor starts flag-free
 expected: working-lock 3 / state-writer 10 / event-logger 24 / auq-lock 0 (fresh install); state files parse; monitor.bat starts with no flag
-result: pending
+result: pass — 2026-08-06 (CC 2.1.223): counts 3/10/24; auq-lock 4 preserved (pre-flip install, WR-02 behavior confirmed live incl. the informational installer note); state files parse and refresh; monitor flag-free; orphan tmp auto-swept on first tick
 
 ### 2. Section A — the flip is live
 expected: overlay state matches monitor-state/*.json at every observed point
-result: pending
+result: pass — 2026-08-06 (CC 2.1.223): working→waiting→working cycle observed live with the >60s notification; state file and overlay agreed throughout
 
 ### 3. Section B — Esc-interrupt recovery
 expected: recovery at ~90s, not 600s
-result: pending
+result: pass — 2026-08-06 (CC 2.1.223): green + notification within 4m22s of tool launch (mathematically excludes the 600s path); Esc itself hook-silent as researched
 
 ### 4. Section C — hook-silence pin
 expected: no false notification past 600s during genuine long-running tool/agent work
-result: pending
+result: pass — 2026-08-06 (CC 2.1.223): 616s of state-file staleness (600s boundary crossed by ~3 ticks), no false notification, D-02b foreground-Agent pin held; see table note for the exact event timeline
 
 ### 5. Section D — the bridge
 expected: hookless session stays visible via legacy_origin bridge
@@ -344,7 +344,7 @@ result: pending
 ## Summary
 
 total: 11
-passed: 0
+passed: 4
 issues: 0
-pending: 11
+pending: 7
 skipped: 0

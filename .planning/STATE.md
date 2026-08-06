@@ -151,6 +151,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T13:45:00.000Z (Windows machine)
-Stopped at: Handoff consumed on the Windows machine — resuming into the 03-UAT.md live run (Setup → Sections A–I → gated Teardown)
-Resume file: .planning/phases/03-flip-to-default-cleanup/03-UAT.md
+Last session: 2026-08-06T14:02:02.059Z (Windows machine)
+Stopped at: 03-UAT live run 4/11 recorded PASS (Setup, A, B, C) — paused mid-UAT, resume at Section D on this machine
+Resume file: .planning/phases/03-flip-to-default-cleanup/.continue-here.md

@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-06T14:02:02.059Z",
+  "phase": "03",
+  "phase_name": "flip-to-default-cleanup",
+  "phase_dir": ".planning/phases/03-flip-to-default-cleanup",
+  "plan": 4,
+  "task": 4,
+  "total_tasks": 4,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": "uat-setup", "name": "03-UAT Setup on the Windows machine: installer upgraded live (WR-02 preserve behavior confirmed), counts 3/10/24 + 4 preserved auq-lock, monitor.bat flag-free, orphan tmp auto-swept on first flipped tick", "status": "done", "commit": "recorded in 03-UAT.md"},
+    {"id": "uat-A", "name": "Section A: full working→waiting→working cycle live, overlay = state file throughout, >60s notification fired", "status": "done", "commit": "recorded in 03-UAT.md"},
+    {"id": "uat-B", "name": "Section B: Esc recovery green+notification within 4m22s (mathematically the ~90s D-02a path, not 600s)", "status": "done", "commit": "recorded in 03-UAT.md"},
+    {"id": "uat-C", "name": "Section C: 616s state-file staleness across the 600s boundary, D-02b foreground-Agent pin held, no false notification", "status": "done", "commit": "recorded in 03-UAT.md"}
+  ],
+  "remaining_tasks": [
+    {"id": "uat-D", "name": "Section D — the bridge: session from a hookless container stays visible via legacy_origin", "status": "not_started"},
+    {"id": "uat-E", "name": "Section E — ghost suppression: SessionEnd tombstone, row gone incl. across monitor restart", "status": "not_started"},
+    {"id": "uat-F", "name": "Section F — docker pause mid-turn, no WAITING degrade past 600s", "status": "not_started"},
+    {"id": "uat-G", "name": "Section G — badge-only bg rule: green+notify at turn end with bg task running, ◉N badge persists", "status": "not_started"},
+    {"id": "uat-H", "name": "Section H — BLOCKING retirement gate: permission prompt + AskUserQuestion both produce needs_input via state-writer alone", "status": "not_started"},
+    {"id": "uat-I", "name": "Section I — preserved fixes: alias vs /clear, multi-monitor toast, sub-60s no-notify", "status": "not_started"},
+    {"id": "uat-teardown", "name": "Teardown (ONLY after H passes): --remove-auq-lock, rm auq-lock.sh + auq-locks/, rm divergence log; NEVER rm monitor-state/", "status": "not_started"},
+    {"id": "verify-work", "name": "/gsd-verify-work 3 — record outcomes, close the phase", "status": "not_started"}
+  ],
+  "blockers": [],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {"action": "Resume the UAT at Section D (needs a hookless container) — sections D/E/F/I are user-driven (docker pause, session exit, /clear, secondary display), G/H can be agent-triggered in-session", "context": "4/11 recorded PASS in 03-UAT.md; runbook order is not binding, any order works as long as Teardown stays gated on H", "blocking": true},
+    {"action": "Do NOT run `bash hooks/install.sh --remove-auq-lock` until Section H is recorded PASS", "context": "D-04 gate; the 4 preserved auq-lock entries are still registered and harmless", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "Section C accepted with a thin (~16s / 3-tick) crossing of the 600s boundary", "rationale": "The harness's own 600s foreground cap moved the agent's tool to background at 611s, capping the silent window at 616s of state staleness; the crossing still exercised the D-02b pin past the boundary with a would-have-notified debounce margin, and the user confirmed no toast", "phase": "03"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "On this same Windows machine, next session: /gsd-resume-work → continue 03-UAT.md at Section D (or whichever section the user wants first); after H passes run the gated Teardown; then /gsd-verify-work 3",
+  "context_notes": "Mid-UAT pause on the Windows machine (same machine resumes — no machine handoff this time). The flip is installed and LIVE here: monitor renders from state files only, notifications behave (A/B/C all green). The known 29acbe20-style long-Monitor sessions are the risk area already covered by C. For Section D, easiest hookless container: any image whose ~/.claude was never touched by hooks/install.sh, e.g. a fresh devcontainer without the mount. For G, remember the >60s work threshold before turn end or no notification will fire regardless. Agent a13aa08e may still emit a late task-notification from its backgrounded 690s sleep — ignore it, it is harmless."
+}
