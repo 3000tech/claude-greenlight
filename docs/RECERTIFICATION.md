@@ -12,6 +12,24 @@ or any time state detection starts misbehaving in a way that looks version-relat
 - Any time the monitor's state detection starts misbehaving and a Claude Code
   update is a plausible cause.
 
+## Upgrading from a pre-flip install
+
+Re-running `bash hooks/install.sh` on an install that predates the Phase 3
+flip is safe and does **not** remove that install's retired AskUserQuestion
+lock hook registrations on its own — that removal is a separate, gated step.
+The plain install run will print a note like:
+
+```
+note: legacy auq-lock entries present (N) — remove with `bash hooks/install.sh --remove-auq-lock` after the 03-UAT Section H parity gate passes
+```
+
+Do not run the suggested removal flag until you have confirmed `needs_input`
+parity live, per Section H of
+[03-UAT.md](../.planning/phases/03-flip-to-default-cleanup/03-UAT.md) — the
+retired hook's registrations are kept in place until that gate passes, by
+design, so a legacy install's permission-prompt/modal detection never
+regresses mid-upgrade.
+
 ## The loop
 
 1. **Install the event logger.**

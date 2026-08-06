@@ -145,42 +145,48 @@ else
   # Drop any entries we may have added on a previous install, then append the
   # canonical set from the snippet. The matcher-less lock entries (PreToolUse/
   # Stop/UserPromptSubmit) are matched on a hook command referencing the lock
-  # script, so re-running never duplicates them. The Stop array also pipes
-  # through drop_auq so a re-run keeps stripping auq-lock.sh's stale
-  # Stop-clear entry even though the snippet no longer supplies a
-  # replacement for it.
+  # script, so re-running never duplicates them. The default path does NOT
+  # sweep auq-lock.sh entries anywhere (WR-02 correction, 03-UAT.md Section
+  # H): D-04's retirement is gated — a pre-flip install's auq-lock.sh
+  # registrations (PreToolUse/PostToolUse/Notification/Stop, wherever they
+  # live) must survive a plain `bash hooks/install.sh` untouched until the
+  # user has confirmed needs_input parity live and runs the explicit
+  # `--remove-auq-lock` teardown. Only `--remove-auq-lock` (below) removes
+  # them.
   #
-  # WR-02: after the merge above, sweep EVERY event array (not just the
-  # three the merge touches) for stale auq-lock.sh command entries — the
-  # exact same command-level filter --remove-auq-lock uses (strip the
-  # matching COMMAND, not the whole entry, since a pre-flip install can
-  # co-locate an auq-lock.sh command alongside a still-live working-lock.sh
-  # command in the same entry object; see the PreToolUse/Stop fixtures in
-  # test_state_writer.py's Goal9_AuqLockRetired). This folds
-  # --remove-auq-lock's cleanup into the default install path so that
-  # running the documented upgrade command (`bash hooks/install.sh`,
-  # README step 4) alone is enough to clean a pre-flip install's
-  # PreToolUse/PostToolUse/Notification/Stop auq-lock.sh registrations —
-  # the separate `--remove-auq-lock` flag remains available but is no
-  # longer required for this. Idempotent on a fresh install: an
-  # install.sh-produced settings.json never has an auq-lock.sh command
-  # anywhere in the first place.
+  # drop_working strips at the COMMAND level, not the entry level, for
+  # exactly the same co-location reason --remove-auq-lock's is_auq_lock
+  # filter does: a pre-flip Stop entry can carry auq-lock.sh's clear
+  # command alongside working-lock.sh's clear command in the SAME entry
+  # object. An entry-level filter on "has a working-lock.sh command" would
+  # drop that whole entry — silently destroying the co-located auq-lock.sh
+  # command as a side effect, exactly the untouched-preservation guarantee
+  # this merge must not violate. Stripping only the matching command (and
+  # dropping an entry only once it has zero commands left) leaves any
+  # co-located auq-lock.sh command as its own surviving entry.
   jq --slurpfile snip "$SNIPPET" '
-    def has_cmd($re): [.hooks[]?.command] | any(. // "" | test($re));
-    def drop_working: map(select(has_cmd("working-lock\\.sh") | not));
-    def drop_auq:     map(select(has_cmd("auq-lock\\.sh")     | not));
-    def is_auq_lock_cmd: (.command // "" | test("auq-lock\\.sh"));
-    def sweep_auq_cmd:
-      map(.hooks |= (map(select(is_auq_lock_cmd | not))))
+    def is_working_lock_cmd: (.command // "" | test("working-lock\\.sh"));
+    def drop_working_cmd:
+      map(.hooks |= (map(select(is_working_lock_cmd | not))))
       | map(select((.hooks // []) | length > 0));
-    .hooks.PreToolUse       = ((.hooks.PreToolUse       // []) | drop_working) + ($snip[0].hooks.PreToolUse       // []) |
-    .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) | drop_working) + ($snip[0].hooks.UserPromptSubmit // []) |
-    .hooks.Stop             = ((.hooks.Stop             // []) | drop_working | drop_auq)                   + ($snip[0].hooks.Stop             // []) |
-    .hooks = ((.hooks // {}) | with_entries(.value |= sweep_auq_cmd))
+    .hooks.PreToolUse       = ((.hooks.PreToolUse       // []) | drop_working_cmd) + ($snip[0].hooks.PreToolUse       // []) |
+    .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) | drop_working_cmd) + ($snip[0].hooks.UserPromptSubmit // []) |
+    .hooks.Stop             = ((.hooks.Stop             // []) | drop_working_cmd) + ($snip[0].hooks.Stop             // [])
   ' "$SETTINGS" > "$SETTINGS.tmp"
   python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
   mv "$SETTINGS.tmp" "$SETTINGS"
   echo "merged into: $SETTINGS (backup at $SETTINGS.bak.*)"
+
+  # Informational only (WR-02 correction): if a pre-flip auq-lock.sh
+  # registration is still present anywhere in settings.json, point at the
+  # gated teardown — never remove it here. Never fails the install.
+  auq_count=$(jq '[.hooks | to_entries[] | .value[]? | select(.hooks[]?.command? // "" | test("auq-lock\\.sh"))] | length' "$SETTINGS" 2>/dev/null || echo 0)
+  case "$auq_count" in
+    ''|*[!0-9]*) auq_count=0 ;;
+  esac
+  if [ "$auq_count" -gt 0 ]; then
+    echo "note: legacy auq-lock entries present ($auq_count) — remove with \`bash hooks/install.sh --remove-auq-lock\` after the 03-UAT Section H parity gate passes"
+  fi
 fi
 
 # Register event-logger.sh on every event name in hook-events.json — the

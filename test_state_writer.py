@@ -830,17 +830,20 @@ class Goal9_AuqLockRetired(_HomeTestCase):
         backups = list((self.home / ".claude").glob("settings.json.bak.*"))
         self.assertEqual(len(backups), 1, backups)
 
-    def test_plain_install_sweeps_stale_auq_lock_entries_from_a_pre_flip_install(self):
-        """WR-02: the documented upgrade command (`bash hooks/install.sh`,
-        no flag) must, on its own, clean a pre-flip install's stale
-        auq-lock.sh registrations across every event array it touched
-        (PreToolUse/PostToolUse/Notification/Stop) — not just the ones
-        --remove-auq-lock users know to run separately. Reuses the same
-        settings.json shape as
+    def test_plain_install_preserves_pre_flip_auq_lock_entries_until_gated_removal(self):
+        """WR-02 (corrected direction, 03-UAT.md Section H / D-04): D-04's
+        auq-lock.sh retirement is GATED — a pre-flip install's auq-lock.sh
+        registrations must survive a plain `bash hooks/install.sh` run
+        completely untouched (across every event array they live in:
+        PreToolUse/PostToolUse/Notification/Stop) until the user has
+        confirmed needs_input parity live and explicitly runs
+        `--remove-auq-lock`. A default install silently sweeping them would
+        defeat that gate. Reuses the same settings.json shape as
         test_remove_auq_lock_strips_only_retired_entries_leaving_working_lock_intact,
         including the co-located Stop entry (auq-lock clear + working-lock
-        clear sharing one hooks array), so a command-level (not entry-level)
-        filter is required to pass."""
+        clear sharing one hooks array), to prove the co-located command
+        survives too — not just the entries with no working-lock.sh
+        neighbour."""
         settings = {
             "hooks": {
                 "PreToolUse": [
@@ -882,18 +885,26 @@ class Goal9_AuqLockRetired(_HomeTestCase):
         # README step 4.
         result = _run_install(self.home)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("legacy auq-lock entries present", result.stdout)
+        self.assertIn("--remove-auq-lock", result.stdout)
 
         merged = _load_settings(self.home)
-        self.assertEqual(_commands_matching(merged, AUQ_LOCK_PATTERN), [])
-        # working-lock.sh survives, including the one that was co-located
-        # with an auq-lock.sh command in the same Stop entry.
+        # All 4 original auq-lock.sh commands, including the one co-located
+        # with a working-lock.sh command in the same Stop entry, survive
+        # completely untouched.
+        self.assertEqual(len(_commands_matching(merged, AUQ_LOCK_PATTERN)), 4)
+        # working-lock.sh is still installed/registered as usual alongside
+        # the surviving auq-lock.sh entries.
         self.assertGreater(len(_commands_matching(merged, LOCK_PATTERN)), 0)
-        # PostToolUse/Notification are legitimately repopulated by the
-        # later event-logger.sh/state-writer.sh registration passes (both
-        # events are in their respective event lists) — the assertion above
-        # (no auq-lock.sh commands anywhere) is what WR-02 requires, not
-        # that these arrays stay empty.
-        self.assertNotEqual(_commands_matching(merged, EVENT_LOGGER_PATTERN), [])
+
+        # The explicit, gated teardown still removes every auq-lock.sh
+        # entry across every array it lives in — that breadth is preserved
+        # from the original WR-02 fix.
+        result2 = _run_install(self.home, "--remove-auq-lock")
+        self.assertEqual(result2.returncode, 0, result2.stderr)
+        merged2 = _load_settings(self.home)
+        self.assertEqual(_commands_matching(merged2, AUQ_LOCK_PATTERN), [])
+        self.assertGreater(len(_commands_matching(merged2, LOCK_PATTERN)), 0)
 
     def test_remove_auq_lock_on_missing_settings_exits_zero(self):
         result = _run_install(self.home, "--remove-auq-lock")
