@@ -81,7 +81,24 @@ Plans:
   2. `test_monitor.py` covers the state-file engine at equivalent coverage to before, with state-file fixtures replacing jsonl fixtures wherever legacy code was removed.
   3. `hooks/install.sh`, the settings snippet, and the README document the new architecture and hook requirements clearly enough that a new container/user can be onboarded correctly.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Tracer: flip the render seam so hook-written state drives the overlay end to end, then delete the shadow-mode machinery (FLIP-01, FLIP-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Retire shell_tracker and the badge pair, add the Esc-recovery and hook-silence fallbacks, and suppress ghost rows via SessionEnd tombstones (FLIP-01, FLIP-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-03-PLAN.md — Badge-only turn-end at the hook, AskUserQuestion lock retirement with its teardown mode, and FLIP-02 equivalent coverage (FLIP-01, FLIP-02, FLIP-03)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 03-04-PLAN.md — README rewrite, TEST-MATRIX promotion into docs/ with a recertification runbook, and the 03-UAT live flip runbook (FLIP-03)
 
 ## Progress
 
@@ -92,4 +109,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Hook Coverage Verification | 2/2 | Complete    | 2026-07-29 |
 | 2. State Writer & Shadow Mode | 4/5 | In Progress|  |
-| 3. Flip to Default & Cleanup | 0/TBD | Not started | - |
+| 3. Flip to Default & Cleanup | 0/4 | Planned | - |
