@@ -64,6 +64,14 @@ bash hooks/install.sh
 
 Run it wherever Claude Code actually runs — inside the container image / entrypoint, or in WSL. Requires `jq`. This is how the monitor knows a session's state: installing writes one small per-session state file under `~/.claude/monitor-state/` on Claude Code's own lifecycle events (turn start, tool use, turn end, permission prompts), plus a working lock that covers the gaps where no event fires. A session running without the hooks stays visible — the monitor still reads its transcript as a fallback — but its state is less accurate than a hooked session's.
 
+### Headless Linux container / devcontainer (development)
+
+`scripts/headless-linux.sh` launches the monitor on a Linux box with no display and no tkinter. It needs no root — it stages tcl/tk into a user cache (override with `GREENLIGHT_TK_CACHE`) and starts a virtual `Xvfb` display. Requires an `Xvfb` binary and python3.11 on x86_64. Arguments are forwarded to `monitor.py`. This is primarily for development and smoke-testing — the supported end-user target is still Windows, per the section above.
+
+```
+bash scripts/headless-linux.sh
+```
+
 **Start at login** (optional): press `Win+R`, run `shell:startup`, and drop a shortcut to `monitor.bat` in the folder that opens.
 
 ## Configuration
