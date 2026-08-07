@@ -15,6 +15,8 @@ Caso reale (2026-08-07, notifica "nursy" delle 15:14 locali / 13:14:20Z): il mon
 
 Regola voluta dall'utente: con n agenti/sessioni attivi sullo stesso lavoro, lo Stop di uno solo NON genera notifica; la notifica parte solo quando **tutti** i processi del gruppo sono terminati (ultimo Stop con nessun altro membro attivo).
 
+Secondo episodio nella stessa mezz'ora (13:28:53Z / 15:28 locali): `Notification` `idle_prompt` sulla stessa sessione `6fff7d17`, 60s dopo uno Stop-checkpoint ("gate wave 1 verde, 2/8 piani, lancio wave 2"); Stop con `background_tasks_count: 1`, sorella `8ced4fe8` mai ferma, sessione ripartita entro 2 minuti. Entrambe le condizioni del gate l'avrebbero soppressa.
+
 ## Solution
 
 I dati per implementare il gate esistono già:
