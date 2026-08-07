@@ -109,6 +109,27 @@ STATE_TOMBSTONE_SUFFIX = ".ended"
 # /workspace/.claude/worktrees/prd-gsd, same job, two containers). Truncate
 # from this marker onward so both fold onto the same group key.
 WORKTREE_MARKER = "/.claude/worktrees/"
+# Append-only jsonl log of every notification decision, sent AND suppressed
+# (quick-260807-iz2), so the group gate above can be audited against the
+# field before it's trusted. The todo that requested this proposed
+# monitor-state/, but that directory is the hook writer's per-session state
+# store that scan_state_files() sweeps and prunes on its own schedule — a
+# monitor-written append-only log belongs beside hook-events.log, at the
+# same ~/.claude root and in the same jsonl-with-size-guard shape
+# (hooks/event-logger.sh), not inside a directory something else owns and
+# cleans. Module-level so tests repoint it exactly as they repoint
+# STATE_DIR/PROJECTS_DIR.
+NOTIFICATIONS_LOG = Path.home() / ".claude" / "notifications.log"
+NOTIFICATIONS_LOG_MAX_BYTES = 5 * 1024 * 1024
+# How long a gated notification may sit held before it's dropped outright
+# rather than fired late. A toast released 40 minutes after the fact would
+# misinform the user about when the session actually became ready, and
+# dropping it costs nothing — the overlay keeps rendering the session green
+# for the whole hold, so the information is never actually lost, just not
+# pushed. Precedent: the legacy bg-shell WORKING pin (quick-260731-an2) used
+# the same "don't let a stale signal run forever" reasoning with a
+# 900-second cap before badge-only replaced it entirely.
+NOTIFY_GATE_MAX_HOLD_SEC = 1800
 # Optional launcher-registry integration: a shell script with a PROJECTS=( ... )
 # array (label|... entries) that controls project naming and display order.
 # Point CLAUDE_LAUNCHER_SH at it; without it, labels fall back to path segments.
@@ -1360,6 +1381,111 @@ def _group_gate_enabled(app) -> bool:
     return bool(config.get("group_gate", True))
 
 
+def notification_text(label: str, elapsed_sec: int, alias: str = "") -> tuple[str, str]:
+    """Compose the toast title/body pair for a "Claude ready" notification
+    (quick-260807-iz2): the SINGLE place this text is built, so `_notify()`
+    (what the user sees) and `notification_record()` (what gets logged) are
+    provably showing/recording the same string, never two independently
+    maintained f-strings that could drift apart.
+
+    Byte-identical to what `_notify()` built before this extraction,
+    including the minutes/seconds humanisation (no "0m" prefix under a
+    minute) and the alias suffix (appended only when `alias` is non-empty,
+    so two sessions sharing a project label — e.g. two `yunoai-france` — are
+    still tellable apart).
+    """
+    mins, secs = divmod(elapsed_sec, 60)
+    elapsed_human = f"{mins}m {secs}s" if mins else f"{secs}s"
+    shown = f"{label} · {alias}" if alias else label
+    toast_title = f"Claude ready — {shown}"
+    toast_body = f"Waiting for your input after {elapsed_human} of work."
+    return toast_title, toast_body
+
+
+def notification_type(state) -> str:
+    """Map a state-file `state` value to the notifications-log vocabulary
+    the originating todo specified (quick-260807-iz2): "stop" for a plain
+    turn-end wait, "needs_input" and "idle_prompt" for their like-named
+    state values, and "unknown" for anything else — including None,
+    non-strings, and any value this engine doesn't currently emit — so a
+    future state value or a malformed record can never crash the logger,
+    only log as unknown.
+    """
+    mapping = {"waiting": "stop", "needs_input": "needs_input", "idle": "idle_prompt"}
+    if not isinstance(state, str):
+        return "unknown"
+    return mapping.get(state, "unknown")
+
+
+def notification_record(s: dict, elapsed_sec: int, alias: str, outcome: str,
+                         reason: str, **extra) -> dict:
+    """Build the flat dict logged for one notification decision — sent or
+    suppressed (quick-260807-iz2).
+
+    Fields are enumerated explicitly rather than dumping `s` — this
+    explicit allow-list is what keeps prompt/tool/jsonl content out of
+    notifications.log (T-iz2-01, T-02-17 precedent): the only free text in
+    the record is the monitor-COMPOSED title/body from notification_text()
+    (project label + alias + elapsed time), never anything a session itself
+    produced. `**extra` lets callers attach hold/gate bookkeeping
+    (held_sec, blocked_by, group detail) without this function needing to
+    know about hold state.
+    """
+    now = time.time()
+    label = session_display_text(s)
+    title, body = notification_text(label, elapsed_sec, alias)
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "ts_ms": int(now * 1000),
+        "session_id": s.get("session_id") or s.get("key"),
+        "key": s.get("key"),
+        "hostname": s.get("hostname"),
+        "cwd": s.get("cwd"),
+        "project": s.get("name"),
+        "group": notification_group_key(s),
+        "type": notification_type(s.get("state")),
+        "state": s.get("state"),
+        "title": title,
+        "body": body,
+        "elapsed_sec": elapsed_sec,
+        "background_tasks_count": s.get("background_tasks_count"),
+        "outcome": outcome,
+        "reason": reason,
+    }
+    record.update(extra)
+    return record
+
+
+def log_notification(record: dict) -> None:
+    """Append one compact JSON line to NOTIFICATIONS_LOG (quick-260807-iz2)
+    — mirrors hooks/event-logger.sh's jsonl shape and 5MB
+    truncate-and-marker size guard, so a reader never mistakes truncation
+    for missing decisions.
+
+    Runs inside the 5-second refresh loop, so the whole body is
+    best-effort: an unwritable path, a full disk, or a read-only home must
+    never stall or crash that loop — any exception is swallowed and this
+    returns None. Unlike the hook script, no flock is used: the monitor
+    holds a process singleton (SINGLETON_PORT), so there is exactly one
+    writer and no cross-process race to guard against.
+    """
+    try:
+        line = json.dumps(record, separators=(",", ":"))
+        NOTIFICATIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        if (NOTIFICATIONS_LOG.exists()
+                and NOTIFICATIONS_LOG.stat().st_size > NOTIFICATIONS_LOG_MAX_BYTES):
+            marker = json.dumps({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "event": "_truncated",
+                "note": "notifications.log exceeded 5MB and was truncated before this line",
+            }, separators=(",", ":"))
+            NOTIFICATIONS_LOG.write_text(marker + "\n", encoding="utf-8")
+        with open(NOTIFICATIONS_LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        return None
+
+
 def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict, dict[str, str]]:
     """List running Docker containers that carry a 'project' label.
 
@@ -2163,14 +2289,10 @@ class MonitorApp:
         """
         verbose = "--test-notify" in sys.argv
         local_on = bool(self.config.get("local", True))
-        mins, secs = divmod(elapsed_sec, 60)
-        elapsed_human = f"{mins}m {secs}s" if mins else f"{secs}s"
         # Append the user's per-session alias when set, so two sessions sharing
         # a project name (e.g. two `yunoai-france`) are still tellable apart.
         alias = self._session_aliases.get(self._alias_key(key), "") if key else ""
-        shown = f"{label} · {alias}" if alias else label
-        toast_title = f"Claude ready — {shown}"
-        toast_body = f"Waiting for your input after {elapsed_human} of work."
+        toast_title, toast_body = notification_text(label, elapsed_sec, alias)
         # Telegram fires regardless of the local switch — the whole point of the
         # phone push is to reach you when you're away from the desk (local muted).
         if self.config.get("telegram", True):

@@ -2408,5 +2408,109 @@ class Goal25b_GroupGateEpisodeReplay(StateFileTestBase):
         self.assertIn("cwd", s)
 
 
+# ---------------------------------------------------------------------------
+# GOAL 26 — append-only notifications.log (quick-260807-iz2 Task 2): one
+# jsonl record per notification decision, sent or suppressed.
+# ---------------------------------------------------------------------------
+
+class Goal26_NotificationsLog(unittest.TestCase):
+    """log_notification()/notification_record()/notification_type()/
+    notification_text() — the logging half of the group gate."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.NOTIFICATIONS_LOG
+        monitor.NOTIFICATIONS_LOG = Path(self._tmp.name) / "sub" / "notifications.log"
+
+    def tearDown(self) -> None:
+        monitor.NOTIFICATIONS_LOG = self._orig_log
+        self._tmp.cleanup()
+
+    def _read_lines(self) -> list[str]:
+        if not monitor.NOTIFICATIONS_LOG.exists():
+            return []
+        return monitor.NOTIFICATIONS_LOG.read_text(encoding="utf-8").splitlines()
+
+    def test_round_trip_appends_one_parseable_line_per_call(self):
+        monitor.log_notification({"a": 1})
+        lines = self._read_lines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0]), {"a": 1})
+
+        monitor.log_notification({"a": 2})
+        lines2 = self._read_lines()
+        self.assertEqual(len(lines2), 2)
+        self.assertEqual(lines2[0], lines[0])  # first line untouched, byte-identical
+        self.assertEqual(json.loads(lines2[1]), {"a": 2})
+
+    def test_record_shape_carries_the_documented_fields(self):
+        s = {"session_id": "sid1", "key": "k1", "hostname": "h1",
+             "cwd": "/workspace", "name": "proj", "state": "waiting",
+             "background_tasks_count": 0}
+        record = monitor.notification_record(s, 90, "", "sent", "")
+        for field in ("ts", "ts_ms", "session_id", "key", "hostname", "cwd",
+                      "project", "group", "type", "state", "title", "body",
+                      "elapsed_sec", "background_tasks_count", "outcome", "reason"):
+            self.assertIn(field, record, field)
+        self.assertEqual(record["session_id"], "sid1")
+        self.assertEqual(record["project"], "proj")
+        self.assertEqual(record["outcome"], "sent")
+
+    def test_type_mapping_never_crashes_on_unrecognised_or_missing(self):
+        self.assertEqual(monitor.notification_type("waiting"), "stop")
+        self.assertEqual(monitor.notification_type("needs_input"), "needs_input")
+        self.assertEqual(monitor.notification_type("idle"), "idle_prompt")
+        self.assertEqual(monitor.notification_type("something-else"), "unknown")
+        self.assertEqual(monitor.notification_type(None), "unknown")
+        self.assertEqual(monitor.notification_type(123), "unknown")
+
+    def test_notification_text_matches_display_with_and_without_alias(self):
+        title, body = monitor.notification_text("nursy_app", 65, "")
+        self.assertEqual(title, "Claude ready — nursy_app")
+        self.assertIn("1m 5s", body)
+
+        title_alias, body_alias = monitor.notification_text("nursy_app", 65, "prod")
+        self.assertEqual(title_alias, "Claude ready — nursy_app · prod")
+        self.assertEqual(body_alias, body)
+
+    def test_never_crashes_when_log_path_unwritable(self):
+        # A FILE where the log's parent directory should be — mkdir(parents=True)
+        # can never succeed here regardless of who runs the suite, unlike a
+        # bare "does not exist" path that a root-run suite could still create.
+        blocker = Path(self._tmp.name) / "not_a_dir"
+        blocker.write_text("x", encoding="utf-8")
+        monitor.NOTIFICATIONS_LOG = blocker / "notifications.log"
+        monitor.log_notification({"a": 1})  # must not raise
+
+    def test_size_guard_truncates_before_next_append_with_marker(self):
+        monitor.NOTIFICATIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        monitor.NOTIFICATIONS_LOG.write_bytes(
+            b"x" * (monitor.NOTIFICATIONS_LOG_MAX_BYTES + 1))
+        monitor.log_notification({"a": 1})
+        lines = self._read_lines()
+        self.assertEqual(len(lines), 2)
+        marker = json.loads(lines[0])
+        self.assertEqual(marker.get("event"), "_truncated")
+        self.assertEqual(json.loads(lines[1]), {"a": 1})
+
+    def test_log_under_threshold_is_never_touched(self):
+        monitor.log_notification({"a": 1})
+        monitor.log_notification({"a": 2})
+        lines = self._read_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertNotEqual(json.loads(lines[0]).get("event"), "_truncated")
+
+    def test_no_content_leak_in_record(self):
+        s = {"session_id": "sid1", "key": "k1", "hostname": "h1",
+             "cwd": "/workspace", "name": "proj", "state": "waiting",
+             "background_tasks_count": 0,
+             "prompt": "SECRET PROMPT TEXT", "tool_input": "rm -rf /",
+             "tool_output": "leaked output", "last_assistant_message": "hi there"}
+        record = monitor.notification_record(s, 10, "", "sent", "")
+        serialised = json.dumps(record)
+        for leak in ("SECRET PROMPT TEXT", "rm -rf /", "leaked output", "hi there"):
+            self.assertNotIn(leak, serialised)
+
+
 if __name__ == "__main__":
     unittest.main()
