@@ -2597,7 +2597,17 @@ class Goal26_NotificationsLog(unittest.TestCase):
 class Goal27_NotificationGateWiring(unittest.TestCase):
     """Drives monitor.MonitorApp._check_transitions through a Fake app in
     Goal8's style, asserting on both captured _notify() calls and the
-    parsed notifications.log jsonl lines."""
+    parsed notifications.log jsonl lines.
+
+    Container identity is now part of group identity (quick-260807-k0y):
+    `_sibling()`'s hostname parameter controls whether it shares `_me()`'s
+    container (hostname "8d5f9694f1de", the real 2026-08-07 primary
+    session's host — same-container, still a real blocker) or defaults to
+    a DIFFERENT container ("4353e1441213", the real 13:28 episode's host —
+    no longer a blocker, per the user's k0y decision). The 13:28 episode
+    now stays suppressed on its OWN background_tasks_count, not on the
+    cross-container sibling. `_nursy`/`_nursy_2` are the new pair proving
+    two containers of the SAME project notify independently."""
 
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
@@ -2653,12 +2663,30 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
                 "cwd": "/workspace", "hostname": "8d5f9694f1de",
                 "status": status, "background_tasks_count": bg, "state": "waiting"}
 
-    def _sibling(self, status: str, working_locked: bool = False) -> dict:
+    def _sibling(self, status: str, working_locked: bool = False,
+                 hostname: str = "4353e1441213") -> dict:
         # The real 2026-08-07 sibling, checked out under a worktree.
+        # Default hostname "4353e1441213" is a DIFFERENT container from
+        # _me()'s "8d5f9694f1de" (quick-260807-k0y accepted consequence) —
+        # no longer a group_working blocker. Pass _me()'s own hostname to
+        # get the same-container main-tree/worktree sibling that still
+        # blocks.
         return {"key": "8ced4fe8", "session_id": "8ced4fe8", "name": "nursy_app",
                 "cwd": "/workspace/.claude/worktrees/prd-gsd",
-                "hostname": "4353e1441213", "status": status,
+                "hostname": hostname, "status": status,
                 "working_locked": working_locked}
+
+    def _nursy(self, status: str, bg: int = 0) -> dict:
+        # Duplicate-project container "nursy" (quick-260807-k0y).
+        return {"key": "nursy1", "session_id": "nursy1", "name": "nursy",
+                "cwd": "/workspace", "hostname": "a1b2c3d4e5f6",
+                "status": status, "background_tasks_count": bg, "state": "waiting"}
+
+    def _nursy_2(self, status: str) -> dict:
+        # Duplicate-project container "nursy-2" — same label, same cwd,
+        # DIFFERENT hostname: an independent job, not this session's sibling.
+        return {"key": "nursy2", "session_id": "nursy2", "name": "nursy",
+                "cwd": "/workspace", "hostname": "f6e5d4c3b2a1", "status": status}
 
     def test_20260807_1314_episode_never_notifies_and_logs_once(self):
         app = self._fake_app()
@@ -2675,30 +2703,59 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
         self.assertEqual(records[0]["outcome"], "suppressed")
         self.assertEqual(records[0]["reason"], "background_tasks")
 
-    def test_20260807_1328_episode_blocked_by_sibling_only(self):
+    def test_20260807_1328_episode_own_background_tasks_only(self):
+        # Was "...blocked_by_sibling_only". Per the user's k0y decision the
+        # cross-container sibling (different hostname) no longer shares a
+        # group with 6fff7d17, so it can no longer block it — but the real
+        # 13:28 Stop still carried background_tasks_count 1, so this episode
+        # stays suppressed anyway, now on the background_tasks condition.
+        # The sibling stays in the tick's session list to prove it no
+        # longer participates in the refusal. Zero-notify and one-record
+        # assertions preserved verbatim.
         app = self._fake_app()
         self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
         app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
-        me_wait = self._me("WAITING", bg=0)
+        me_wait = self._me("WAITING", bg=1)
         sib = self._sibling("WORKING")
         self._tick(app, [me_wait, sib])   # arm
-        self._tick(app, [me_wait, sib])   # gate check -> group_working
+        self._tick(app, [me_wait, sib])   # gate check -> background_tasks
         self.assertEqual(app.notifications, [])
         records = self._read_records()
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["reason"], "group_working")
-        self.assertIn("8ced4fe8", records[0]["blocked_by"])
+        self.assertEqual(records[0]["reason"], "background_tasks")
+
+    def test_duplicate_project_containers_notify_independently(self):
+        # The new guarantee (quick-260807-k0y), end to end through
+        # _check_transitions: "nursy" and "nursy-2" share a project label
+        # and cwd but have different hostnames, so nursy-2 being WORKING
+        # never blocks nursy from notifying.
+        app = self._fake_app()
+        self._tick(app, [self._nursy("WORKING"), self._nursy_2("WORKING")])
+        app._working_since["nursy1"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        nursy_wait = self._nursy("WAITING", bg=0)
+        nursy_2_working = self._nursy_2("WORKING")
+        self._tick(app, [nursy_wait, nursy_2_working])   # arm
+        self._tick(app, [nursy_wait, nursy_2_working])   # fires — different group
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "sent")
+        self.assertEqual(records[0]["group"],
+                          monitor.notification_group_key(nursy_wait))
 
     def test_release_fires_exactly_once_with_held_sec(self):
+        # Same-container sibling (shares _me()'s hostname) so it still
+        # blocks per the k0y-narrowed group key.
         app = self._fake_app()
-        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        self._tick(app, [self._me("WORKING"),
+                          self._sibling("WORKING", hostname="8d5f9694f1de")])
         app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
         me_wait = self._me("WAITING", bg=0)
-        sib_working = self._sibling("WORKING")
+        sib_working = self._sibling("WORKING", hostname="8d5f9694f1de")
         self._tick(app, [me_wait, sib_working])   # arm
         self._tick(app, [me_wait, sib_working])   # held: group_working
         self._advance(30)
-        sib_waiting = self._sibling("WAITING")
+        sib_waiting = self._sibling("WAITING", hostname="8d5f9694f1de")
         self._tick(app, [me_wait, sib_waiting])   # release: last member done
         self.assertEqual(len(app.notifications), 1)
         self._tick(app, [me_wait, sib_waiting])   # further tick: nothing more
@@ -2756,11 +2813,13 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
         self.assertEqual(records[-1]["outcome"], "suppressed")
 
     def test_reason_change_reopens_and_logs_once(self):
+        # Same-container sibling (shares _me()'s hostname) so it still
+        # blocks per the k0y-narrowed group key.
         app = self._fake_app()
-        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        sib = self._sibling("WORKING", hostname="8d5f9694f1de")
+        self._tick(app, [self._me("WORKING"), sib])
         app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
         me_wait_bg = self._me("WAITING", bg=1)
-        sib = self._sibling("WORKING")
         self._tick(app, [me_wait_bg, sib])   # arm
         self._tick(app, [me_wait_bg, sib])   # held: background_tasks
         me_wait_nobg = self._me("WAITING", bg=0)
