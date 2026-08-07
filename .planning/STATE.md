@@ -119,6 +119,7 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 - [major/general] Preserve today's fixes (2026-07-30) across the Phase 3 flip — alias container-key (Goal6d da riscrivere su fixture state-file, non droppare), multi-monitor fix, soglia 60s deliberata
+- [major/general] Notifica gated sul gruppo — solo quando tutte le sessioni terminano (2026-08-07) — caso reale nursy 15:14: Stop di 1 sessione su 3 notificato come "finito"; gate su background_tasks_count==0 + nessun working-lock di sessioni sorelle (worktrees = stesso gruppo)
 
 - [minor/testing] Campagna ricertificazione hook per versione Claude Code (2026-07-29) — promuovere matrice+runbook fuori da .planning, fixture per versione, smoke ai major bump
 - [minor/general] Show paused-container sessions in overlay instead of dropping them (2026-07-30) — idea da UAT C4: il motore state-file le tiene già (D-06), è solo rendering al flip di Phase 3
