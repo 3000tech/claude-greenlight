@@ -1297,7 +1297,7 @@ def notification_group_key(s: dict) -> str:
     hookless row (scan()'s dicts carry neither field) notifying exactly as
     it does today, and it keeps any future producer that forgets to stamp
     a field failing toward notifying rather than toward silence.
-    under-grouping can at worst duplicate a notification; over-grouping
+    Under-grouping can at worst duplicate a notification; over-grouping
     could silence a genuine "this session needs you now" — the wrong
     direction to fail in.
 
