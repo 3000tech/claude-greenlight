@@ -1268,37 +1268,58 @@ def bg_badge_text(count: int | float | None) -> str:
 
 def notification_group_key(s: dict) -> str:
     """Work-group identity of one session dict, for the notification gate
-    (quick-260807-iz2): the real 2026-08-07 case was two containers running
-    the SAME job on the SAME repo (session 6fff7d17 at cwd /workspace,
-    sibling 8ced4fe8 at /workspace/.claude/worktrees/prd-gsd) — a single
-    session flipping to WAITING there is an intermediate checkpoint, not
-    "the job is done", and must not page the user while its sibling is
-    still WORKING.
+    (quick-260807-iz2, narrowed by quick-260807-k0y): a work group is one
+    project label, at one worktree-folded root, INSIDE ONE CONTAINER.
 
-    Returns "" ("ungrouped") when `s["cwd"]` is missing, empty or not a
-    string — a solo group of one, which gate_notification() treats as never
-    blocking and never being blocked. That's the deliberate fallback for
-    legacy/hookless rows (scan()'s dicts carry no cwd at all) and for any
-    future producer that forgets to stamp the field: under-grouping can at
-    worst duplicate a notification, over-grouping could silence a genuine
-    "this session needs you now" — the wrong direction to fail in.
+    Container identity belongs here because the user runs duplicate-project
+    containers (nursy, nursy-2 — same label, same mount path, different
+    hosts) as INDEPENDENT jobs, and every other identity consumer in this
+    file already disambiguates them per-container: derive_alias_key() keys
+    aliases by hostname, session_display_name()/container_display_name()
+    draw the disambiguated name. This group key was the one consumer still
+    treating duplicate containers as interchangeable — nursy-2 finishing a
+    turn was silenced while nursy was still working, which is exactly the
+    notification the user needs. hostname is the right field to add: it's
+    the same identity family those other consumers already key on, it's
+    already stamped into every state-file session dict (no producer
+    change), and it survives a sessionId rotation.
 
-    Otherwise normalises the cwd (backslashes to forward slashes, strip
-    trailing separators) and, if WORKTREE_MARKER appears in it, truncates
-    from the marker onward so a worktree checkout folds onto its main repo
-    checkout's root. The normalised cwd is combined with the session's
-    project label `name` — NOT `display_name`, which deliberately differs
-    between duplicate containers of the SAME project
-    (container_display_name's documented display-only rule) and would split
-    one work group into several if used here — via a "::" separator.
-    The label half is what stops two unrelated devcontainers, both mounted
-    at /workspace (every devcontainer does), from being folded into one
-    group; the cost is that a sibling launched under a different project
-    label simply stays ungrouped from this one, which is again the safe
+    Still retained, and why: the worktree fold (a worktree checkout and its
+    main checkout inside ONE container are still one job — a WAITING
+    checkpoint there isn't "the job is done" while a sibling worktree in
+    the SAME container is still WORKING) and the project label (two
+    unrelated devcontainers both mounted at /workspace must never merge).
+
+    Returns "" ("ungrouped") when `s["cwd"]` OR `s["hostname"]` is missing,
+    empty or not a string — a solo group of one, which gate_notification()
+    treats as never blocking and never being blocked. That's the same
+    fallback direction as the existing cwd guard: it keeps a legacy/
+    hookless row (scan()'s dicts carry neither field) notifying exactly as
+    it does today, and it keeps any future producer that forgets to stamp
+    a field failing toward notifying rather than toward silence.
+    under-grouping can at worst duplicate a notification; over-grouping
+    could silence a genuine "this session needs you now" — the wrong
     direction to fail in.
+
+    Deliberately reads the raw `s.get("hostname")` field, never
+    derive_alias_key()'s return value: that function's documented fallback
+    returns the ROW KEY when hostname is unknown, which would hand every
+    hostname-less session a non-empty singleton group key and destroy the
+    ungrouped-"" fallback this function relies on.
+
+    Accepted consequence, recorded as a decision rather than a regret: two
+    containers genuinely running one job across a main tree and a worktree
+    (the real 2026-08-07 case, hosts 8d5f9694f1de and 4353e1441213) no
+    longer share a group — that pair now resolves to two independent
+    groups. That's the user's call, made knowing it, and it's what makes
+    the far more common duplicate-container case (nursy vs nursy-2) fire
+    correctly instead of silencing each other.
     """
     cwd = s.get("cwd")
     if not isinstance(cwd, str) or not cwd:
+        return ""
+    hostname = s.get("hostname")
+    if not isinstance(hostname, str) or not hostname:
         return ""
     normalized = cwd.replace("\\", "/")
     while len(normalized) > 1 and normalized.endswith("/"):
@@ -1308,7 +1329,7 @@ def notification_group_key(s: dict) -> str:
         normalized = normalized[:marker_idx]
     name = s.get("name")
     label = name if isinstance(name, str) else ""
-    return f"{label}::{normalized}"
+    return f"{label}::{normalized}::{hostname}"
 
 
 def gate_notification(session: dict, sessions: list[dict]) -> tuple[bool, str, dict]:

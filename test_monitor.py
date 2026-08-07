@@ -2314,31 +2314,66 @@ class Goal23_ShellTrackerRemoved(unittest.TestCase):
 
 class Goal25_GroupGatedNotifications(unittest.TestCase):
     """notification_group_key() and gate_notification() as pure functions —
-    no tkinter, no state files. The episode replay lives in
+    no tkinter, no state files. Key is now a three-part label :: worktree-
+    folded root :: hostname (quick-260807-k0y): container identity is part
+    of group identity, so two containers of the SAME project (nursy,
+    nursy-2) get independent notification channels instead of one shared,
+    mutually-silencing channel. The episode replay lives in
     Goal25b_GroupGateEpisodeReplay below (needs StateFileTestBase)."""
 
+    def test_duplicate_project_containers_get_different_keys_and_dont_block(self):
+        nursy = {"key": "a", "name": "nursy", "cwd": "/workspace",
+                 "hostname": "a1b2c3d4e5f6", "background_tasks_count": 0}
+        nursy_2 = {"key": "b", "name": "nursy", "cwd": "/workspace",
+                   "hostname": "f6e5d4c3b2a1", "status": "WORKING"}
+        self.assertNotEqual(monitor.notification_group_key(nursy),
+                             monitor.notification_group_key(nursy_2))
+        allowed, reason, _ = monitor.gate_notification(nursy, [nursy, nursy_2])
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "")
+
     def test_worktree_checkout_folds_onto_main_checkout(self):
-        main = {"name": "nursy_app", "cwd": "/workspace"}
-        worktree = {"name": "nursy_app", "cwd": "/workspace/.claude/worktrees/prd-gsd"}
-        deeper = {"name": "nursy_app", "cwd": "/workspace/.claude/worktrees/prd-gsd/src"}
+        main = {"name": "nursy_app", "cwd": "/workspace", "hostname": "c0ffee00"}
+        worktree = {"name": "nursy_app",
+                     "cwd": "/workspace/.claude/worktrees/prd-gsd",
+                     "hostname": "c0ffee00"}
+        deeper = {"name": "nursy_app",
+                   "cwd": "/workspace/.claude/worktrees/prd-gsd/src",
+                   "hostname": "c0ffee00"}
         key_main = monitor.notification_group_key(main)
         self.assertEqual(key_main, monitor.notification_group_key(worktree))
         self.assertEqual(key_main, monitor.notification_group_key(deeper))
 
-    def test_shared_cwd_different_project_labels_never_merge(self):
-        a = {"name": "nursy_app", "cwd": "/workspace"}
-        b = {"name": "dev-tools", "cwd": "/workspace"}
+    def test_shared_cwd_and_hostname_different_project_labels_never_merge(self):
+        a = {"name": "nursy_app", "cwd": "/workspace", "hostname": "h1"}
+        b = {"name": "dev-tools", "cwd": "/workspace", "hostname": "h1"}
         self.assertNotEqual(monitor.notification_group_key(a),
                              monitor.notification_group_key(b))
 
+    def test_unknown_hostname_is_ungrouped(self):
+        base = {"name": "x", "cwd": "/workspace"}
+        self.assertEqual(monitor.notification_group_key(dict(base)), "")
+        self.assertEqual(
+            monitor.notification_group_key(dict(base, hostname="")), "")
+        self.assertEqual(
+            monitor.notification_group_key(dict(base, hostname=123)), "")
+
+        me = dict(base, hostname="", background_tasks_count=0)
+        sibling = dict(base, hostname="", status="WORKING")
+        allowed, _, _ = monitor.gate_notification(me, [me, sibling])
+        self.assertTrue(allowed)
+
     def test_unknown_cwd_is_ungrouped(self):
-        self.assertEqual(monitor.notification_group_key({"name": "x"}), "")
-        self.assertEqual(monitor.notification_group_key({"name": "x", "cwd": ""}), "")
-        self.assertEqual(monitor.notification_group_key({"name": "x", "cwd": 123}), "")
+        base = {"name": "x", "hostname": "h1"}
+        self.assertEqual(monitor.notification_group_key(dict(base)), "")
+        self.assertEqual(monitor.notification_group_key(dict(base, cwd="")), "")
+        self.assertEqual(monitor.notification_group_key(dict(base, cwd=123)), "")
 
     def test_windows_separators_normalise_like_forward_slash(self):
-        win = {"name": "nursy_app", "cwd": "C:\\workspace\\proj\\"}
-        posix = {"name": "nursy_app", "cwd": "C:/workspace/proj"}
+        win = {"name": "nursy_app", "cwd": "C:\\workspace\\proj\\",
+               "hostname": "h1"}
+        posix = {"name": "nursy_app", "cwd": "C:/workspace/proj",
+                  "hostname": "h1"}
         self.assertEqual(monitor.notification_group_key(win),
                           monitor.notification_group_key(posix))
 
@@ -2365,9 +2400,10 @@ class Goal25_GroupGatedNotifications(unittest.TestCase):
 
     def test_working_sibling_in_same_group_blocks_and_names_it(self):
         me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
-              "background_tasks_count": 0}
+              "hostname": "h1", "background_tasks_count": 0}
         sibling = {"key": "b", "name": "nursy_app",
-                   "cwd": "/workspace/.claude/worktrees/prd-gsd", "status": "WORKING"}
+                   "cwd": "/workspace/.claude/worktrees/prd-gsd",
+                   "hostname": "h1", "status": "WORKING"}
         allowed, reason, detail = monitor.gate_notification(me, [me, sibling])
         self.assertFalse(allowed)
         self.assertEqual(reason, "group_working")
@@ -2379,24 +2415,25 @@ class Goal25_GroupGatedNotifications(unittest.TestCase):
 
     def test_sibling_in_different_group_never_blocks(self):
         me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
-              "background_tasks_count": 0}
+              "hostname": "h1", "background_tasks_count": 0}
         other_project = {"key": "b", "name": "dev-tools", "cwd": "/workspace",
-                          "status": "WORKING"}
+                          "hostname": "h1", "status": "WORKING"}
         allowed, _, _ = monitor.gate_notification(me, [me, other_project])
         self.assertTrue(allowed)
 
     def test_legacy_working_locked_sibling_blocks_like_working(self):
         me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
-              "background_tasks_count": 0}
+              "hostname": "h1", "background_tasks_count": 0}
         legacy_sibling = {"key": "b", "name": "nursy_app", "cwd": "/workspace",
-                           "status": "WAITING", "working_locked": True}
+                           "hostname": "h1", "status": "WAITING",
+                           "working_locked": True}
         allowed, reason, _ = monitor.gate_notification(me, [me, legacy_sibling])
         self.assertFalse(allowed)
         self.assertEqual(reason, "group_working")
 
     def test_session_never_blocked_by_its_own_presence(self):
         me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
-              "background_tasks_count": 0, "status": "WAITING"}
+              "hostname": "h1", "background_tasks_count": 0, "status": "WAITING"}
         allowed, _, _ = monitor.gate_notification(me, [me])
         self.assertTrue(allowed)
 
@@ -2406,7 +2443,10 @@ class Goal25b_GroupGateEpisodeReplay(StateFileTestBase):
     files on disk -> scan_state_files() session dicts -> gate_notification()
     -> a refused notification. Also pins that adding `cwd` to the session
     dict did not disturb scan_state_files()'s pre-existing verdict fields
-    (Goal9/Goal10/Goal11/Goal24 stay green untouched, run separately)."""
+    (Goal9/Goal10/Goal11/Goal24 stay green untouched, run separately), and
+    pins the accepted consequence of quick-260807-k0y: the real pair's two
+    hostnames now resolve to DIFFERENT group keys, so the 13:14 replay is
+    refused on the background_tasks condition alone, not on group_working."""
 
     def test_20260807_1314_episode_is_refused_by_the_gate(self):
         self._write_state("6fff7d17", state="waiting", last_event="Stop",
@@ -2422,6 +2462,18 @@ class Goal25b_GroupGateEpisodeReplay(StateFileTestBase):
         allowed, reason, _ = monitor.gate_notification(by_id["6fff7d17"], sessions)
         self.assertFalse(allowed)
         self.assertEqual(reason, "background_tasks")
+
+    def test_20260807_accepted_consequence_real_pair_now_different_groups(self):
+        self._write_state("6fff7d17", state="waiting", last_event="Stop",
+                           background_tasks_count=1, hostname="8d5f9694f1de",
+                           cwd="/workspace")
+        self._write_state("8ced4fe8", state="working", hostname="4353e1441213",
+                           cwd="/workspace/.claude/worktrees/prd-gsd")
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"6fff7d17": "nursy_app", "8ced4fe8": "nursy_app"})
+        by_id = {s["session_id"]: s for s in sessions}
+        self.assertNotEqual(monitor.notification_group_key(by_id["6fff7d17"]),
+                             monitor.notification_group_key(by_id["8ced4fe8"]))
 
     def test_scan_state_files_verdict_fields_unaffected_by_cwd_addition(self):
         self._write_state("a", state="working")
