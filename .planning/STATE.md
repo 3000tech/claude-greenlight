@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
 Plan: 4 of 4
 Status: Phase complete — ready for verification
-Last activity: 2026-08-07 — Completed quick task 260807-b5k: headless Linux setup+launch script
+Last activity: 2026-08-07 — Completed quick task 260807-iz2: group-gated notifications + notifications.log
 
 Progress: [█████████░] 91%
 
@@ -119,10 +119,10 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 - [major/general] Preserve today's fixes (2026-07-30) across the Phase 3 flip — alias container-key (Goal6d da riscrivere su fixture state-file, non droppare), multi-monitor fix, soglia 60s deliberata
-- [major/general] Notifica gated sul gruppo — solo quando tutte le sessioni terminano (2026-08-07) — caso reale nursy 15:14: Stop di 1 sessione su 3 notificato come "finito"; gate su background_tasks_count==0 + nessun working-lock di sessioni sorelle (worktrees = stesso gruppo)
+- ~~[major/general] Notifica gated sul gruppo — solo quando tutte le sessioni terminano~~ DONE 2026-08-07 (quick 260807-iz2) — gate hold/release in _check_transitions, regressioni sui due episodi reali 13:14:20Z e 13:28:53Z
 
 - [minor/testing] Campagna ricertificazione hook per versione Claude Code (2026-07-29) — promuovere matrice+runbook fuori da .planning, fixture per versione, smoke ai major bump
-- [minor/general] Log su file di tutte le notifiche inviate (2026-08-07) — jsonl append-only con sessione/host/tipo/testo ed esito del gate (inviata vs soppressa), per audit e per validare il gate di gruppo sul campo
+- ~~[minor/general] Log su file di tutte le notifiche inviate~~ DONE 2026-08-07 (quick 260807-iz2) — ~/.claude/notifications.log jsonl append-only, logga inviate E soppresse con motivo del gate
 - [minor/general] Show paused-container sessions in overlay instead of dropping them (2026-07-30) — idea da UAT C4: il motore state-file le tiene già (D-06), è solo rendering al flip di Phase 3
 - [minor/general] Startup check: refuse to start with clear error when hooks are not installed (2026-07-30) — proposta utente in UAT; candidato allo scope Phase 3 (post-flip un monitor senza hook è quasi cieco)
 - [minor/general] Ghost jsonl rows survive container kill via dir-fallback — consider SessionEnd tombstones (2026-07-30) — quirk legacy pre-esistente visto in UAT; lo state-writer sa che la sessione è finita ma il ponte legacy_origin ricopia il fantasma
@@ -143,6 +143,7 @@ Recent decisions affecting current work:
 | 260807-b5k | Add headless Linux setup+launch script for greenlight (user-space tkinter + Xvfb) | 2026-08-07 | 935604d | [260807-b5k-add-headless-linux-setup-launch-script-f](./quick/260807-b5k-add-headless-linux-setup-launch-script-f/) |
 | 260731-c52 | Docker rows show the container name when it disambiguates a duplicate project (dev-tools / dev-tools-2), else fall back to the project label | 2026-07-31 | ebb25b0 | [260731-c52-container-rows-show-docker-name-when-it-](./quick/260731-c52-container-rows-show-docker-name-when-it-/) |
 | 260731-cgg | Session rows, compact chips and notifications show the disambiguated container name for duplicate-project sessions (display-only; sort/alias/divergence identity untouched) | 2026-07-31 | 1e07ee1 | [260731-cgg-session-rows-and-compact-chips-show-disa](./quick/260731-cgg-session-rows-and-compact-chips-show-disa/) |
+| 260807-iz2 | Group-gated notifications (hold/release, no notify while group siblings work) + append-only notifications.log of every sent/suppressed decision | 2026-08-07 | 7961105 | [260807-iz2-group-gated-notifications-sent-notificat](./quick/260807-iz2-group-gated-notifications-sent-notificat/) |
 
 ## Deferred Items
 
