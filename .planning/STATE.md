@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
 Plan: 4 of 4
 Status: Phase complete — ready for verification
-Last activity: 2026-08-07 — Completed quick task 260807-iz2: group-gated notifications + notifications.log
+Last activity: 2026-08-07 — Completed quick task 260807-k0y: container identity in notification group key
 
 Progress: [█████████░] 91%
 
@@ -144,6 +144,7 @@ Recent decisions affecting current work:
 | 260731-c52 | Docker rows show the container name when it disambiguates a duplicate project (dev-tools / dev-tools-2), else fall back to the project label | 2026-07-31 | ebb25b0 | [260731-c52-container-rows-show-docker-name-when-it-](./quick/260731-c52-container-rows-show-docker-name-when-it-/) |
 | 260731-cgg | Session rows, compact chips and notifications show the disambiguated container name for duplicate-project sessions (display-only; sort/alias/divergence identity untouched) | 2026-07-31 | 1e07ee1 | [260731-cgg-session-rows-and-compact-chips-show-disa](./quick/260731-cgg-session-rows-and-compact-chips-show-disa/) |
 | 260807-iz2 | Group-gated notifications (hold/release, no notify while group siblings work) + append-only notifications.log of every sent/suppressed decision | 2026-08-07 | 7961105 | [260807-iz2-group-gated-notifications-sent-notificat](./quick/260807-iz2-group-gated-notifications-sent-notificat/) |
+| 260807-k0y | Notification group key includes container identity (hostname) — duplicate-project containers (nursy / nursy-2) page independently | 2026-08-07 | f04478d | [260807-k0y-notification-group-key-includes-containe](./quick/260807-k0y-notification-group-key-includes-containe/) |
 
 ## Deferred Items
 
