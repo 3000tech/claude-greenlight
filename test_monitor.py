@@ -2282,5 +2282,131 @@ class Goal23_ShellTrackerRemoved(unittest.TestCase):
             self.assertFalse(hasattr(monitor, name), name)
 
 
+# ---------------------------------------------------------------------------
+# GOAL 25 — group-gated notifications (quick-260807-iz2 Task 1): the two
+# pure-function building blocks, notification_group_key() and
+# gate_notification(), plus the real 2026-08-07 episode replayed end to end
+# through scan_state_files().
+# ---------------------------------------------------------------------------
+
+class Goal25_GroupGatedNotifications(unittest.TestCase):
+    """notification_group_key() and gate_notification() as pure functions —
+    no tkinter, no state files. The episode replay lives in
+    Goal25b_GroupGateEpisodeReplay below (needs StateFileTestBase)."""
+
+    def test_worktree_checkout_folds_onto_main_checkout(self):
+        main = {"name": "nursy_app", "cwd": "/workspace"}
+        worktree = {"name": "nursy_app", "cwd": "/workspace/.claude/worktrees/prd-gsd"}
+        deeper = {"name": "nursy_app", "cwd": "/workspace/.claude/worktrees/prd-gsd/src"}
+        key_main = monitor.notification_group_key(main)
+        self.assertEqual(key_main, monitor.notification_group_key(worktree))
+        self.assertEqual(key_main, monitor.notification_group_key(deeper))
+
+    def test_shared_cwd_different_project_labels_never_merge(self):
+        a = {"name": "nursy_app", "cwd": "/workspace"}
+        b = {"name": "dev-tools", "cwd": "/workspace"}
+        self.assertNotEqual(monitor.notification_group_key(a),
+                             monitor.notification_group_key(b))
+
+    def test_unknown_cwd_is_ungrouped(self):
+        self.assertEqual(monitor.notification_group_key({"name": "x"}), "")
+        self.assertEqual(monitor.notification_group_key({"name": "x", "cwd": ""}), "")
+        self.assertEqual(monitor.notification_group_key({"name": "x", "cwd": 123}), "")
+
+    def test_windows_separators_normalise_like_forward_slash(self):
+        win = {"name": "nursy_app", "cwd": "C:\\workspace\\proj\\"}
+        posix = {"name": "nursy_app", "cwd": "C:/workspace/proj"}
+        self.assertEqual(monitor.notification_group_key(win),
+                          monitor.notification_group_key(posix))
+
+    def test_own_background_tasks_refuse_with_reason(self):
+        s = {"key": "a", "name": "solo", "background_tasks_count": 1}
+        allowed, reason, detail = monitor.gate_notification(s, [s])
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "background_tasks")
+        self.assertEqual(detail["background_tasks_count"], 1)
+
+    def test_zero_or_unknown_background_tasks_never_refuse_alone(self):
+        s0 = {"key": "a", "name": "solo", "background_tasks_count": 0}
+        allowed, reason, _ = monitor.gate_notification(s0, [s0])
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "")
+
+        s_absent = {"key": "a", "name": "solo"}
+        allowed, _, _ = monitor.gate_notification(s_absent, [s_absent])
+        self.assertTrue(allowed)
+
+        s_non_numeric = {"key": "a", "name": "solo", "background_tasks_count": "n/a"}
+        allowed, _, _ = monitor.gate_notification(s_non_numeric, [s_non_numeric])
+        self.assertTrue(allowed)
+
+    def test_working_sibling_in_same_group_blocks_and_names_it(self):
+        me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
+              "background_tasks_count": 0}
+        sibling = {"key": "b", "name": "nursy_app",
+                   "cwd": "/workspace/.claude/worktrees/prd-gsd", "status": "WORKING"}
+        allowed, reason, detail = monitor.gate_notification(me, [me, sibling])
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "group_working")
+        self.assertIn("b", detail["blocked_by"])
+
+        sibling_waiting = dict(sibling, status="WAITING")
+        allowed, _, _ = monitor.gate_notification(me, [me, sibling_waiting])
+        self.assertTrue(allowed)
+
+    def test_sibling_in_different_group_never_blocks(self):
+        me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
+              "background_tasks_count": 0}
+        other_project = {"key": "b", "name": "dev-tools", "cwd": "/workspace",
+                          "status": "WORKING"}
+        allowed, _, _ = monitor.gate_notification(me, [me, other_project])
+        self.assertTrue(allowed)
+
+    def test_legacy_working_locked_sibling_blocks_like_working(self):
+        me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
+              "background_tasks_count": 0}
+        legacy_sibling = {"key": "b", "name": "nursy_app", "cwd": "/workspace",
+                           "status": "WAITING", "working_locked": True}
+        allowed, reason, _ = monitor.gate_notification(me, [me, legacy_sibling])
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "group_working")
+
+    def test_session_never_blocked_by_its_own_presence(self):
+        me = {"key": "a", "name": "nursy_app", "cwd": "/workspace",
+              "background_tasks_count": 0, "status": "WAITING"}
+        allowed, _, _ = monitor.gate_notification(me, [me])
+        self.assertTrue(allowed)
+
+
+class Goal25b_GroupGateEpisodeReplay(StateFileTestBase):
+    """The real 2026-08-07 13:14:20Z episode, replayed end to end: state
+    files on disk -> scan_state_files() session dicts -> gate_notification()
+    -> a refused notification. Also pins that adding `cwd` to the session
+    dict did not disturb scan_state_files()'s pre-existing verdict fields
+    (Goal9/Goal10/Goal11/Goal24 stay green untouched, run separately)."""
+
+    def test_20260807_1314_episode_is_refused_by_the_gate(self):
+        self._write_state("6fff7d17", state="waiting", last_event="Stop",
+                           background_tasks_count=1, hostname="8d5f9694f1de",
+                           cwd="/workspace")
+        self._write_state("8ced4fe8", state="working", hostname="4353e1441213",
+                           cwd="/workspace/.claude/worktrees/prd-gsd")
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"6fff7d17": "nursy_app", "8ced4fe8": "nursy_app"})
+        by_id = {s["session_id"]: s for s in sessions}
+        self.assertIn("cwd", by_id["6fff7d17"])
+        self.assertEqual(by_id["6fff7d17"]["cwd"], "/workspace")
+        allowed, reason, _ = monitor.gate_notification(by_id["6fff7d17"], sessions)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "background_tasks")
+
+    def test_scan_state_files_verdict_fields_unaffected_by_cwd_addition(self):
+        self._write_state("a", state="working")
+        [s] = monitor.scan_state_files(sessionid_to_label={"a": "L"})
+        self.assertEqual((s["status"], s["dot_color"], s["rank"]),
+                          ("WORKING", "#666", 2))
+        self.assertIn("cwd", s)
+
+
 if __name__ == "__main__":
     unittest.main()

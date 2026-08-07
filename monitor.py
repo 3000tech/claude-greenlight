@@ -102,6 +102,13 @@ STATE_CLOCK_SKEW_GUARD_SEC = 300
 # restart that would otherwise forget an in-process suppression set. Chosen
 # so it can never collide with the "*.json" glob the state-record loop uses.
 STATE_TOMBSTONE_SUFFIX = ".ended"
+# Notification group-gate (quick-260807-iz2): a worktree checkout of the
+# same repo (e.g. .claude/worktrees/prd-gsd) sits on its own cwd but is the
+# SAME work group as its main-checkout sibling — the real 2026-08-07 case
+# (session 6fff7d17 at /workspace, sibling 8ced4fe8 at
+# /workspace/.claude/worktrees/prd-gsd, same job, two containers). Truncate
+# from this marker onward so both fold onto the same group key.
+WORKTREE_MARKER = "/.claude/worktrees/"
 # Optional launcher-registry integration: a shell script with a PROJECTS=( ... )
 # array (label|... entries) that controls project naming and display order.
 # Point CLAUDE_LAUNCHER_SH at it; without it, labels fall back to path segments.
@@ -752,6 +759,13 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 continue
             hostname = obj.get("hostname")
             hostname = hostname if isinstance(hostname, str) and hostname else None
+            # cwd (quick-260807-iz2): read the same defensive way as
+            # hostname above — a missing or non-string value becomes None,
+            # never a crash or a stray "" that would masquerade as a real
+            # path. Consumed only by notification_group_key(); scan_state_files
+            # itself never opens, joins, globs or stats this value.
+            cwd = obj.get("cwd")
+            cwd = cwd if isinstance(cwd, str) and cwd else None
             name = sessionid_to_label.get(session_id) if sessionid_to_label else None
             if name is None and container_info and hostname:
                 name = container_info.get("hostname_to_label", {}).get(hostname)
@@ -820,6 +834,7 @@ def scan_state_files(label_map: dict[str, str] | None = None,
                 "state": state_val,
                 "last_event": last_event,
                 "hostname": obj.get("hostname"),
+                "cwd": cwd,
                 "background_tasks_count": bg_count,
                 "alias_key": derive_alias_key(hostname, session_id),
                 "display_name": session_display_name(name, hostname, hostname_to_name),
@@ -1228,6 +1243,121 @@ def bg_badge_text(count: int | float | None) -> str:
     if n == 1:
         return "◉"
     return f"◉{n}"
+
+
+def notification_group_key(s: dict) -> str:
+    """Work-group identity of one session dict, for the notification gate
+    (quick-260807-iz2): the real 2026-08-07 case was two containers running
+    the SAME job on the SAME repo (session 6fff7d17 at cwd /workspace,
+    sibling 8ced4fe8 at /workspace/.claude/worktrees/prd-gsd) — a single
+    session flipping to WAITING there is an intermediate checkpoint, not
+    "the job is done", and must not page the user while its sibling is
+    still WORKING.
+
+    Returns "" ("ungrouped") when `s["cwd"]` is missing, empty or not a
+    string — a solo group of one, which gate_notification() treats as never
+    blocking and never being blocked. That's the deliberate fallback for
+    legacy/hookless rows (scan()'s dicts carry no cwd at all) and for any
+    future producer that forgets to stamp the field: under-grouping can at
+    worst duplicate a notification, over-grouping could silence a genuine
+    "this session needs you now" — the wrong direction to fail in.
+
+    Otherwise normalises the cwd (backslashes to forward slashes, strip
+    trailing separators) and, if WORKTREE_MARKER appears in it, truncates
+    from the marker onward so a worktree checkout folds onto its main repo
+    checkout's root. The normalised cwd is combined with the session's
+    project label `name` — NOT `display_name`, which deliberately differs
+    between duplicate containers of the SAME project
+    (container_display_name's documented display-only rule) and would split
+    one work group into several if used here — via a "::" separator.
+    The label half is what stops two unrelated devcontainers, both mounted
+    at /workspace (every devcontainer does), from being folded into one
+    group; the cost is that a sibling launched under a different project
+    label simply stays ungrouped from this one, which is again the safe
+    direction to fail in.
+    """
+    cwd = s.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return ""
+    normalized = cwd.replace("\\", "/")
+    while len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    marker_idx = normalized.find(WORKTREE_MARKER)
+    if marker_idx != -1:
+        normalized = normalized[:marker_idx]
+    name = s.get("name")
+    label = name if isinstance(name, str) else ""
+    return f"{label}::{normalized}"
+
+
+def gate_notification(session: dict, sessions: list[dict]) -> tuple[bool, str, dict]:
+    """Whether `session`'s armed WORKING→WAITING notification should be
+    allowed to fire right now (quick-260807-iz2).
+
+    Two independent conditions, checked in order, either of which refuses:
+
+      (a) "background_tasks" — this session's OWN background_tasks_count is
+          a known, positive number: async work this session itself started
+          is still in flight. An absent, None or non-numeric count is
+          UNKNOWN and must never refuse — that's what keeps a hookless/
+          legacy row (no background_tasks_count field at all) notifying
+          exactly as it does today. Note this is a NOTIFICATION-gate read,
+          not a STATE input: D-03's badge-only rule for the rendered
+          STATE/colour stays untouched — scan_state_files()'s verdict logic
+          never calls this function.
+
+      (b) "group_working" — another session sharing this session's work
+          group (see notification_group_key) is itself WORKING, or (a
+          legacy row) carries working_locked True. A session is never
+          blocked by its own presence in `sessions`. A session with an
+          ungrouped ("") key is never blocked by this condition — solo
+          sessions and legacy/hookless rows behave exactly as before this
+          gate existed.
+
+    Returns (allowed, reason, detail). `allowed` is False iff either
+    condition above refused; `reason` is "background_tasks",
+    "group_working" or "" (allowed). `detail` carries only identifiers —
+    the group key, the background_tasks_count examined, and for a group
+    refusal the list of blocking sessions' `key` values — never any text a
+    session produced (T-iz2-01/T-iz2-03).
+    """
+    group = notification_group_key(session)
+    bg_count = session.get("background_tasks_count")
+    detail: dict = {"group": group, "background_tasks_count": bg_count}
+    if (isinstance(bg_count, (int, float)) and not isinstance(bg_count, bool)
+            and bg_count > 0):
+        return False, "background_tasks", detail
+    if not group:
+        return True, "", detail
+    own_key = session.get("key")
+    blockers = [
+        other.get("key") for other in sessions
+        if other.get("key") != own_key
+        and notification_group_key(other) == group
+        and (other.get("status") == "WORKING" or other.get("working_locked"))
+    ]
+    if blockers:
+        detail["blocked_by"] = blockers
+        return False, "group_working", detail
+    return True, "", detail
+
+
+def _group_gate_enabled(app) -> bool:
+    """Config-file-only escape hatch for the notification group gate
+    (quick-260807-iz2): `group_gate: false` in the config file disables it
+    in the field with no code change and no new UI surface. A module-level
+    function (not a MonitorApp method) so it can be called on any object
+    that merely LOOKS like an app — `_check_transitions` is exercised in
+    tests via `MonitorApp._check_transitions(fake, ...)` where `fake` is a
+    bare test double, and a bound-method call (`self._group_gate_enabled()`)
+    would raise AttributeError on a double that doesn't define it. Reads
+    `app.config` defensively: missing or non-dict `config` (any test double
+    that hasn't grown one) defaults to the gate being ON.
+    """
+    config = getattr(app, "config", None)
+    if not isinstance(config, dict):
+        return True
+    return bool(config.get("group_gate", True))
 
 
 def scan_containers() -> tuple[list[dict], dict[str, str], dict[str, str], dict, dict[str, str]]:
@@ -1886,7 +2016,17 @@ class MonitorApp:
                         # Debounce: arm now, fire only if still WAITING next tick.
                         self._pending_notify[key] = int(now - started)
                 elif key in self._pending_notify:
-                    self._notify(session_display_text(s), self._pending_notify.pop(key), key=key)
+                    # Group gate (quick-260807-iz2, Task 1 provisional wiring):
+                    # a refused notification is simply dropped here — Task 3
+                    # replaces this pop-and-drop with hold/release/discard
+                    # bookkeeping so a held notification can still fire once
+                    # its group finishes, instead of being lost.
+                    elapsed = self._pending_notify.pop(key)
+                    allowed = True
+                    if _group_gate_enabled(self):
+                        allowed, _reason, _detail = gate_notification(s, sessions)
+                    if allowed:
+                        self._notify(session_display_text(s), elapsed, key=key)
             self._prev_status[key] = curr
         # Drop tracking for sessions no longer present
         for key in list(self._prev_status):
