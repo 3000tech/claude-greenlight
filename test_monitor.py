@@ -1065,13 +1065,36 @@ class Goal8_NotificationDebounce(unittest.TestCase):
     same turn, and that blip must not produce a toast.
     """
 
+    def setUp(self) -> None:
+        # _check_transitions now logs every notification decision
+        # (quick-260807-iz2 Task 3) — repoint NOTIFICATIONS_LOG so this
+        # suite never writes to the developer's real ~/.claude.
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.NOTIFICATIONS_LOG
+        monitor.NOTIFICATIONS_LOG = Path(self._tmp.name) / "notifications.log"
+
+    def tearDown(self) -> None:
+        monitor.NOTIFICATIONS_LOG = self._orig_log
+        self._tmp.cleanup()
+
     def _fake_app(self):
         class Fake:
             def __init__(self):
                 self._prev_status = {}
                 self._working_since = {}
                 self._pending_notify = {}
+                # Attributes the group-gate wiring in _check_transitions
+                # touches (quick-260807-iz2 Task 3): an empty hold register,
+                # an empty alias map, an identity alias-key resolver, and a
+                # config dict (group_gate defaults True but this fixture has
+                # no cwd on its sessions, so the gate is always inert here).
+                self._notify_hold = {}
+                self._session_aliases = {}
+                self.config = {}
                 self.notifications = []
+
+            def _alias_key(self, key):
+                return key
 
             def _notify(self, label, elapsed, key=None):
                 self.notifications.append((label, elapsed, key))
@@ -2510,6 +2533,217 @@ class Goal26_NotificationsLog(unittest.TestCase):
         serialised = json.dumps(record)
         for leak in ("SECRET PROMPT TEXT", "rm -rf /", "leaked output", "hi there"):
             self.assertNotIn(leak, serialised)
+
+
+# ---------------------------------------------------------------------------
+# GOAL 27 — hold/release/discard wiring at the notification choke point
+# (quick-260807-iz2 Task 3): both real 2026-08-07 episodes replayed end to
+# end through _check_transitions, plus release/discard/expire/reason-change/
+# solo/escape-hatch coverage.
+# ---------------------------------------------------------------------------
+
+class Goal27_NotificationGateWiring(unittest.TestCase):
+    """Drives monitor.MonitorApp._check_transitions through a Fake app in
+    Goal8's style, asserting on both captured _notify() calls and the
+    parsed notifications.log jsonl lines."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.NOTIFICATIONS_LOG
+        monitor.NOTIFICATIONS_LOG = Path(self._tmp.name) / "notifications.log"
+        self._now = [1_700_000_000.0]
+        self._time_patch = mock.patch.object(
+            monitor.time, "time", side_effect=lambda: self._now[0])
+        self._time_patch.start()
+
+    def tearDown(self) -> None:
+        self._time_patch.stop()
+        monitor.NOTIFICATIONS_LOG = self._orig_log
+        self._tmp.cleanup()
+
+    def _advance(self, seconds: float) -> None:
+        self._now[0] += seconds
+
+    def _fake_app(self, group_gate: bool = True):
+        class Fake:
+            def __init__(self):
+                self._prev_status = {}
+                self._working_since = {}
+                self._pending_notify = {}
+                self._notify_hold = {}
+                self._session_aliases = {}
+                self.config = {"group_gate": group_gate}
+                self.notifications = []
+
+            def _alias_key(self, key):
+                return key
+
+            def _notify(self, label, elapsed, key=None):
+                self.notifications.append((label, elapsed, key))
+
+            def _dismiss_session_toast(self, key):
+                pass
+
+        return Fake()
+
+    def _tick(self, app, sessions):
+        monitor.MonitorApp._check_transitions(app, sessions)
+
+    def _read_records(self) -> list[dict]:
+        if not monitor.NOTIFICATIONS_LOG.exists():
+            return []
+        return [json.loads(line) for line in
+                monitor.NOTIFICATIONS_LOG.read_text(encoding="utf-8").splitlines()]
+
+    def _me(self, status: str, bg: int = 0) -> dict:
+        # The real 2026-08-07 primary session.
+        return {"key": "6fff7d17", "session_id": "6fff7d17", "name": "nursy_app",
+                "cwd": "/workspace", "hostname": "8d5f9694f1de",
+                "status": status, "background_tasks_count": bg, "state": "waiting"}
+
+    def _sibling(self, status: str, working_locked: bool = False) -> dict:
+        # The real 2026-08-07 sibling, checked out under a worktree.
+        return {"key": "8ced4fe8", "session_id": "8ced4fe8", "name": "nursy_app",
+                "cwd": "/workspace/.claude/worktrees/prd-gsd",
+                "hostname": "4353e1441213", "status": status,
+                "working_locked": working_locked}
+
+    def test_20260807_1314_episode_never_notifies_and_logs_once(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=1)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib])   # arm
+        self._tick(app, [me_wait, sib])   # gate check -> hold opens, logged
+        self._tick(app, [me_wait, sib])   # hold persists -> no new log line
+        self.assertEqual(app.notifications, [])
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "suppressed")
+        self.assertEqual(records[0]["reason"], "background_tasks")
+
+    def test_20260807_1328_episode_blocked_by_sibling_only(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=0)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib])   # arm
+        self._tick(app, [me_wait, sib])   # gate check -> group_working
+        self.assertEqual(app.notifications, [])
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["reason"], "group_working")
+        self.assertIn("8ced4fe8", records[0]["blocked_by"])
+
+    def test_release_fires_exactly_once_with_held_sec(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=0)
+        sib_working = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib_working])   # arm
+        self._tick(app, [me_wait, sib_working])   # held: group_working
+        self._advance(30)
+        sib_waiting = self._sibling("WAITING")
+        self._tick(app, [me_wait, sib_waiting])   # release: last member done
+        self.assertEqual(len(app.notifications), 1)
+        self._tick(app, [me_wait, sib_waiting])   # further tick: nothing more
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "sent")
+        self.assertIn("held_sec", records[-1])
+        self.assertGreaterEqual(records[-1]["held_sec"], 30)
+
+    def test_discard_on_self_resume_logs_session_resumed(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=1)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib])   # arm
+        self._tick(app, [me_wait, sib])   # held
+        self._tick(app, [self._me("WORKING"), sib])   # the real 13:14 outcome
+        self.assertEqual(app.notifications, [])
+        self.assertEqual(app._pending_notify, {})
+        self.assertEqual(app._notify_hold, {})
+        records = self._read_records()
+        self.assertEqual(records[-1]["reason"], "session_resumed")
+        self.assertEqual(records[-1]["outcome"], "suppressed")
+
+    def test_discard_on_vanish_logs_from_snapshot(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=1)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib])   # arm
+        self._tick(app, [me_wait, sib])   # held
+        self._tick(app, [sib])            # 6fff7d17 vanishes from the list
+        self.assertEqual(app.notifications, [])
+        records = self._read_records()
+        self.assertEqual(records[-1]["reason"], "session_gone")
+        self.assertEqual(records[-1]["session_id"], "6fff7d17")
+
+    def test_hold_expires_past_cap_and_is_dropped(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=1)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib])   # arm
+        self._tick(app, [me_wait, sib])   # held
+        self._advance(monitor.NOTIFY_GATE_MAX_HOLD_SEC + 5)
+        self._tick(app, [me_wait, sib])   # expire
+        self.assertEqual(app.notifications, [])
+        self.assertEqual(app._pending_notify, {})
+        self.assertEqual(app._notify_hold, {})
+        records = self._read_records()
+        self.assertEqual(records[-1]["reason"], "hold_expired")
+        self.assertEqual(records[-1]["outcome"], "suppressed")
+
+    def test_reason_change_reopens_and_logs_once(self):
+        app = self._fake_app()
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait_bg = self._me("WAITING", bg=1)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait_bg, sib])   # arm
+        self._tick(app, [me_wait_bg, sib])   # held: background_tasks
+        me_wait_nobg = self._me("WAITING", bg=0)
+        self._tick(app, [me_wait_nobg, sib])   # still refused, now group_working
+        self._tick(app, [me_wait_nobg, sib])   # persists, no new log line
+        records = self._read_records()
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["reason"], "background_tasks")
+        self.assertEqual(records[1]["reason"], "group_working")
+
+    def test_solo_session_notifies_on_second_tick_and_logs_sent(self):
+        app = self._fake_app()
+        self._tick(app, [{"key": "solo1", "name": "loner", "status": "WORKING"}])
+        app._working_since["solo1"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        solo_wait = {"key": "solo1", "name": "loner", "status": "WAITING"}
+        self._tick(app, [solo_wait])   # arm
+        self.assertEqual(app.notifications, [])
+        self._tick(app, [solo_wait])   # fires — no group, no bg tasks
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "sent")
+
+    def test_escape_hatch_disables_gate_but_log_still_written(self):
+        app = self._fake_app(group_gate=False)
+        self._tick(app, [self._me("WORKING"), self._sibling("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        me_wait = self._me("WAITING", bg=1)
+        sib = self._sibling("WORKING")
+        self._tick(app, [me_wait, sib])   # arm
+        self._tick(app, [me_wait, sib])   # gate disabled -> fires (today's behaviour)
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "sent")
 
 
 if __name__ == "__main__":

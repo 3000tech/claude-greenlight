@@ -1759,6 +1759,17 @@ class MonitorApp:
         # WORKING→WAITING debounce: elapsed work seconds keyed by session, armed on
         # the first WAITING tick and fired only if the next tick is still WAITING.
         self._pending_notify: dict[str, int] = {}
+        # Group-gate open-hold register (quick-260807-iz2 Task 3): one entry
+        # per session whose notification is armed (in _pending_notify) but
+        # currently gate-refused. Keyed by session key; each value holds the
+        # tick the hold opened at ("opened_at"), the reason currently
+        # blocking it ("reason", so a reason CHANGE can be told apart from a
+        # steady-state hold and re-logged once), and a snapshot of the
+        # record fields captured when the hold opened ("record_kwargs" —
+        # elapsed_sec/alias/session fields), so a session that later VANISHES
+        # can still be logged as "session_gone" without its (now-missing)
+        # session dict.
+        self._notify_hold: dict[str, dict] = {}
         # Live toast Toplevels keyed by session key, so we can close a stale "ready" toast
         # when the session goes back to WORKING (grey) or disappears.
         self._open_toasts: dict[str, "tk.Toplevel"] = {}
@@ -2120,6 +2131,22 @@ class MonitorApp:
         Also dismiss any stale "ready" toast when the session goes back to WORKING
         (semaforo grigio = utente ha ripreso) or disappears entirely — the notice
         is no longer relevant and shouldn't sit around, especially in muted/sticky mode.
+
+        Group gate (quick-260807-iz2): once armed (`_pending_notify`), a
+        notification is re-checked against `gate_notification()` every tick
+        it stays WAITING, not just once. A refusal opens/updates an entry in
+        `self._notify_hold` rather than dropping the notification — the
+        `_pending_notify` entry is deliberately NOT popped while held, so
+        the next tick re-evaluates the same armed notification. From a held
+        state exactly one of four things eventually happens: RELEASE (the
+        gate clears -> fires, `_notify` called exactly once), DISCARD on
+        self-resume (this loop's WORKING branch below), DISCARD on vanish
+        (the sweep at the bottom), or EXPIRE past
+        NOTIFY_GATE_MAX_HOLD_SEC. Every one of those four outcomes, plus a
+        plain (never-held) send, logs exactly one notification_record() —
+        and while a hold merely PERSISTS with the same reason tick after
+        tick, nothing new is logged, so a 5-second refresh loop can't flood
+        notifications.log over one stuck episode.
         """
         now = time.time()
         seen: set[str] = set()
@@ -2133,8 +2160,17 @@ class MonitorApp:
                     self._working_since[key] = now
                     self._dismiss_session_toast(key)
                 # A green blip between two tasks lands here on the next tick:
-                # the armed notification is discarded, no toast fires.
-                self._pending_notify.pop(key, None)
+                # the armed notification is discarded, no toast fires. If a
+                # gate hold was open, the session resuming ITSELF is what
+                # discards it — the real 2026-08-07 13:14 outcome.
+                elapsed = self._pending_notify.pop(key, None)
+                hold = self._notify_hold.pop(key, None)
+                if hold is not None:
+                    held_sec = int(now - hold["opened_at"])
+                    alias = self._session_aliases.get(self._alias_key(key), "")
+                    log_notification(notification_record(
+                        s, elapsed if elapsed is not None else 0, alias,
+                        "suppressed", "session_resumed", held_sec=held_sec))
             else:  # WAITING
                 if prev == "WORKING":
                     started = self._working_since.pop(key, None)
@@ -2142,24 +2178,73 @@ class MonitorApp:
                         # Debounce: arm now, fire only if still WAITING next tick.
                         self._pending_notify[key] = int(now - started)
                 elif key in self._pending_notify:
-                    # Group gate (quick-260807-iz2, Task 1 provisional wiring):
-                    # a refused notification is simply dropped here — Task 3
-                    # replaces this pop-and-drop with hold/release/discard
-                    # bookkeeping so a held notification can still fire once
-                    # its group finishes, instead of being lost.
-                    elapsed = self._pending_notify.pop(key)
-                    allowed = True
+                    elapsed = self._pending_notify[key]
+                    allowed, reason, detail = True, "", {}
                     if _group_gate_enabled(self):
-                        allowed, _reason, _detail = gate_notification(s, sessions)
+                        allowed, reason, detail = gate_notification(s, sessions)
+                    hold = self._notify_hold.get(key)
+                    alias = self._session_aliases.get(self._alias_key(key), "")
                     if allowed:
+                        # RELEASE (hold was open) or a plain, never-held send.
+                        held_sec = None
+                        if hold is not None:
+                            held_sec = int(now - hold["opened_at"])
+                            del self._notify_hold[key]
+                        del self._pending_notify[key]
                         self._notify(session_display_text(s), elapsed, key=key)
+                        extra = {"held_sec": held_sec} if held_sec is not None else {}
+                        log_notification(notification_record(
+                            s, elapsed, alias, "sent",
+                            "gate_cleared" if held_sec is not None else "", **extra))
+                    elif hold is not None and (now - hold["opened_at"]) >= NOTIFY_GATE_MAX_HOLD_SEC:
+                        # EXPIRE: dropped, not fired — the overlay keeps showing
+                        # the session green regardless, so nothing is lost, just
+                        # not pushed this late.
+                        held_sec = int(now - hold["opened_at"])
+                        del self._pending_notify[key]
+                        del self._notify_hold[key]
+                        log_notification(notification_record(
+                            s, elapsed, alias, "suppressed", "hold_expired",
+                            held_sec=held_sec))
+                    elif hold is None:
+                        # Hold OPENS: log once now, snapshot for a possible
+                        # future vanish (the session dict won't exist then).
+                        self._notify_hold[key] = {
+                            "opened_at": now, "reason": reason,
+                            "snapshot": dict(s), "elapsed": elapsed, "alias": alias,
+                        }
+                        log_notification(notification_record(
+                            s, elapsed, alias, "suppressed", reason, **detail))
+                    elif hold.get("reason") != reason:
+                        # Reason CHANGED mid-hold (e.g. background_tasks ->
+                        # group_working): log once for the new reason, refresh
+                        # the snapshot, then go quiet again while it persists.
+                        hold["reason"] = reason
+                        hold["snapshot"] = dict(s)
+                        hold["elapsed"] = elapsed
+                        hold["alias"] = alias
+                        log_notification(notification_record(
+                            s, elapsed, alias, "suppressed", reason, **detail))
+                    # else: hold persists with the same reason this tick —
+                    # already logged when it opened, nothing new to record.
             self._prev_status[key] = curr
         # Drop tracking for sessions no longer present
         for key in list(self._prev_status):
             if key not in seen:
                 del self._prev_status[key]
                 self._working_since.pop(key, None)
-                self._pending_notify.pop(key, None)
+                elapsed = self._pending_notify.pop(key, None)
+                hold = self._notify_hold.pop(key, None)
+                if hold is not None:
+                    # DISCARD on vanish, built from the hold's own snapshot —
+                    # `sessions` no longer carries this session's dict.
+                    held_sec = int(now - hold["opened_at"])
+                    snapshot = hold.get("snapshot") or {"key": key}
+                    snap_elapsed = hold.get("elapsed", elapsed if elapsed is not None else 0)
+                    snap_alias = hold.get("alias", "")
+                    log_notification(notification_record(
+                        snapshot, snap_elapsed, snap_alias,
+                        "suppressed", "session_gone", held_sec=held_sec))
                 self._dismiss_session_toast(key)
 
     def _notify_toast(self, title: str, message: str, key: str | None = None) -> bool:
