@@ -20,7 +20,12 @@
 # Captured by value: scalar verdict fields only — state, ts, ts_ms, cwd,
 # hostname (container identity for the cwd-collision problem, captured as
 # data only, never displayed — see D-05), last_event, and
-# background_tasks_count (a count, not the task descriptors themselves).
+# background_tasks_count (a count, not the task descriptors themselves). A
+# background task descriptor's `type` and `status` fields are read inside
+# the Stop-branch jq expression (case 17 rev.3) to resolve the in-flight
+# all-subagent check, but neither value — nor any other descriptor field —
+# is ever captured into the record; only the boolean outcome of the check
+# feeds the `state` value already covered above.
 #
 # Deliberately NOT captured: prompt, tool_input, tool_response, message
 # bodies, background_tasks descriptors, command text, or any other
@@ -48,11 +53,16 @@
 #     mid-session /compact re-fires SessionStart on the SAME session_id;
 #     writing idle here would blank a live working state and read
 #     downstream as a turn that ended)
-#   Stop                                     -> waiting, unconditionally
-#     (case 17 rev.2, TEST-MATRIX.md section 4 — D-03: a turn that ends
-#     while background work is still running now shows WAITING and
-#     notifies immediately; background_tasks_count still rides along in
-#     the record but only as badge data, never as a verdict input)
+#   Stop                                     -> working, when every
+#     in-flight background task's `type` is "subagent"; waiting otherwise
+#     (case 17 rev.3, TEST-MATRIX.md section 4 — D-03 narrowed: an agent
+#     still running is guaranteed to re-invoke this session at its own
+#     completion, so the turn owes the user nothing yet and must not page
+#     them. A background shell, an unrecognised or missing `type`, or no
+#     in-flight task at all keeps the rev.2 behaviour — waiting,
+#     notifying immediately. background_tasks_count still rides along in
+#     the record either way, purely as badge data, never the sole verdict
+#     input; the in-flight filter always runs before the type check)
 #   SubagentStop                             -> no write, deliberate no-op
 #     (case 12 — can arrive AFTER the parent's Stop; writing here would move
 #     the verdict after the turn already ended)
@@ -125,6 +135,32 @@ case "$background_tasks_count" in
   ''|*[!0-9]*) background_tasks_count=0 ;;
 esac
 
+# Resolve bg_agents_only (case 17 rev.3): true only when at least one
+# background task is in flight AND every in-flight entry's `type` is
+# exactly "subagent". Reuses the SAME deny-list clause as
+# background_tasks_count above, verbatim, so the in-flight filter always
+# runs BEFORE the type check — a long-finished shell from earlier in the
+# turn can never permanently suppress this rule. Each entry is normalized
+# with `if type == "object" then . else {} end` before the select, so a
+# hostile array holding a bare string or number can never abort jq; each
+# survivor's `type` is projected through `((.type // "") | tostring)` so a
+# missing or non-string type can never accidentally equal "subagent". The
+# empty-array vacuous-`all()` trap is closed by the explicit
+# `($inflight | length) > 0` guard. Fail-safe direction: unknown evidence
+# always resolves to false (never suppresses a notification), never true.
+bg_agents_only=$(jq -r '
+  [.background_tasks[]?
+    | (if type == "object" then . else {} end)
+    | select((.status // "running") != "completed" and (.status // "running") != "failed")
+    | ((.type // "") | tostring)]
+  as $inflight
+  | if ($inflight | length) > 0 and ($inflight | all(. == "subagent")) then "true" else "false" end
+' <<<"$payload" 2>/dev/null)
+case "$bg_agents_only" in
+  true) : ;;
+  *) bg_agents_only=false ;;
+esac
+
 # Event-to-state mapping — the full D-08 verdict set (see header comment).
 # Every branch either resolves a `state` value for the record builder below,
 # or exits 0 without writing. No branch ever reads background_tasks
@@ -150,12 +186,22 @@ case "$event" in
     state="idle"
     ;;
   Stop)
-    # Unconditionally waiting (D-03, TEST-MATRIX case 17 rev.2): the
-    # background-task count resolved above still rides into the record
-    # below, but only as badge data — it never gates this verdict. See
-    # the header's event-to-state mapping comment for the divergence-class-3
-    # history this reverses.
+    # D-03 (TEST-MATRIX case 17 rev.3): waiting is the default, promoted to
+    # working only when bg_agents_only is true — every in-flight background
+    # task at this Stop is confirmed type "subagent", which re-invokes this
+    # session on its own completion, so the session owes the user nothing
+    # yet. The in-flight filter (resolved above) always runs before the
+    # type check, so a finished shell from earlier in the turn can never
+    # pin this to waiting forever, nor can it ever count toward "all
+    # subagent". Any other in-flight evidence — a shell, a missing type, an
+    # unrecognised type, a non-string type, or no in-flight task at all —
+    # keeps waiting unchanged, exactly rev.2's behaviour.
+    # background_tasks_count still rides into the record either way, purely
+    # as badge data (D-09) — it never gates this verdict on its own.
     state="waiting"
+    if [ "$bg_agents_only" = "true" ]; then
+      state="working"
+    fi
     ;;
   SubagentStop)
     # Deliberate no-op: SubagentStop can arrive AFTER the parent's Stop
