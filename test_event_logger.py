@@ -541,5 +541,127 @@ class Goal7b_RemovalPathOnUnpopulatedSettings(_HomeTestCase):
         self.assertEqual(settings.get("someUnrelatedTopLevelKey"), {"nested": True})
 
 
+# ---------------------------------------------------------------------------
+# GOAL 8 — background_tasks descriptor SHAPE is sampled by name and enum
+# value only, never by content, and never breaks the count/absent contract
+# ---------------------------------------------------------------------------
+
+class Goal8_BackgroundTaskDescriptorShapeSampling(_HomeTestCase):
+    def test_two_entry_payload_shape_lists_each_entrys_own_field_names(self):
+        payload = _payload(
+            event="Stop", session_id="s1", cwd="/w",
+            background_tasks=[
+                {"id": "t1", "type": "shell", "status": "running", "command": "sleep 60"},
+                {"id": "bg_2", "type": "agent", "agent_type": "gsd-planner", "status": "running", "prompt": "do it"},
+            ],
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        shape = line["background_tasks_shape"]
+        self.assertEqual(len(shape), 2)
+        self.assertEqual(set(shape[0]["keys"]), {"id", "type", "status", "command"})
+        self.assertEqual(set(shape[1]["keys"]), {"id", "type", "agent_type", "status", "prompt"})
+        self.assertEqual(shape[0]["id"], "t1")
+        self.assertEqual(shape[0]["type"], "shell")
+        self.assertEqual(shape[0]["status"], "running")
+        self.assertEqual(shape[1]["agent_type"], "gsd-planner")
+
+    def test_sentinel_in_command_and_prompt_values_never_reaches_the_log_text(self):
+        sentinel = "SENTINEL-LEAK-i5n"
+        payload = _payload(
+            event="Stop", session_id="s2", cwd="/w",
+            background_tasks=[
+                {"id": "t1", "type": "shell", "status": "running", "command": f"deploy.sh {sentinel}"},
+                {"id": "bg_2", "type": "agent", "status": "running", "prompt": f"go do {sentinel}"},
+            ],
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        raw_text = _log_text(self.home)
+        self.assertNotIn(sentinel, raw_text)
+        [line] = _read_log_lines(self.home)
+        shape = line["background_tasks_shape"]
+        self.assertIn("command", shape[0]["keys"])
+        self.assertNotIn("command", shape[0])
+        self.assertIn("prompt", shape[1]["keys"])
+        self.assertNotIn("prompt", shape[1])
+
+    def test_value_shape_guard_drops_whitespace_and_overlong_values_by_value_not_by_name(self):
+        payload = _payload(
+            event="Stop", session_id="s3", cwd="/w",
+            background_tasks=[
+                {"type": "has space", "status": "x" * 100},
+                {"type": "agent"},
+            ],
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        shape = line["background_tasks_shape"]
+        self.assertEqual(set(shape[0]["keys"]), {"type", "status"})
+        self.assertNotIn("type", shape[0])
+        self.assertNotIn("status", shape[0])
+        self.assertEqual(shape[1]["type"], "agent")
+
+    def test_absent_and_nonarray_background_tasks_produce_no_shape_key(self):
+        result_absent = _run_logger(
+            _payload(event="Stop", session_id="s4", cwd="/w"), self.home,
+        )
+        result_string = _run_logger(
+            _payload(event="Stop", session_id="s5", cwd="/w", background_tasks="notarray"),
+            self.home,
+        )
+        self.assertEqual(result_absent.returncode, 0, result_absent.stderr)
+        self.assertEqual(result_string.returncode, 0, result_string.stderr)
+        lines = _read_log_lines(self.home)
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertNotIn("background_tasks_shape", line)
+
+    def test_seven_entries_cap_shape_at_five_while_count_stays_seven(self):
+        tasks = [{"id": f"t{i}", "type": "shell"} for i in range(7)]
+        payload = _payload(event="Stop", session_id="s6", cwd="/w", background_tasks=tasks)
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertEqual(line["background_tasks_count"], 7)
+        self.assertEqual(len(line["background_tasks_shape"]), 5)
+
+    def test_nonobject_entries_produce_empty_keys_lists_and_exit_zero(self):
+        payload = _payload(
+            event="Stop", session_id="s7", cwd="/w",
+            background_tasks=["justastring", 42],
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        [line] = _read_log_lines(self.home)
+        shape = line["background_tasks_shape"]
+        self.assertEqual(len(shape), 2)
+        for entry in shape:
+            self.assertEqual(entry["keys"], [])
+
+    def test_empty_array_yields_empty_shape_list_distinct_from_absent_case(self):
+        payload = _payload(event="Stop", session_id="s8", cwd="/w", background_tasks=[])
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertIn("background_tasks_shape", line)
+        self.assertEqual(line["background_tasks_shape"], [])
+        self.assertEqual(line["background_tasks_count"], 0)
+
+    def test_subagentstop_also_carries_shape(self):
+        payload = _payload(
+            event="SubagentStop", session_id="s9", cwd="/w",
+            background_tasks=[{"id": "t1", "type": "shell"}],
+        )
+        result = _run_logger(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [line] = _read_log_lines(self.home)
+        self.assertIn("background_tasks_shape", line)
+        self.assertEqual(line["background_tasks_shape"][0]["type"], "shell")
+
+
 if __name__ == "__main__":
     unittest.main()

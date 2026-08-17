@@ -22,6 +22,24 @@
 # top-level field names — which answers "what fields does this event carry
 # and what are they called" without logging any of their values.
 #
+# Since quick task 260817-i5n (case 17 rev.3: is a background AGENT
+# distinguishable from a background SHELL at turn end), the first five
+# entries of Stop/SubagentStop's background_tasks array are also sampled by
+# SHAPE under background_tasks_shape — never by full value. Two independent
+# guards gate what survives: a closed field-NAME allowlist of exactly
+# fourteen names (id, task_id, agent_id, shell_id, type, kind, task_type,
+# agent_type, subagent_type, status, state, source, mode, tool_name), and a
+# value-SHAPE regex (`^[A-Za-z0-9_.:-]{1,64}$` for strings; booleans and
+# numbers pass as-is) that drops any value carrying whitespace, a quote, a
+# slash or more than 64 characters even when its name is allowlisted. A
+# dropped value's NAME still appears in that entry's own `keys` list, so an
+# undocumented content-bearing field is discoverable by name without its
+# content ever landing on the shared mount. command/cmd/args/argv/prompt/
+# description/env/output/result/stdout/stderr/message/last_assistant_message
+# are deliberately excluded from the name allowlist — the two guards
+# together mean a field named innocuously still can't leak a command-shaped
+# value, and a field literally named `command` can't leak even one token.
+#
 # `message` (Notification's payload field) is captured by default but
 # truncated to 200 characters, since its exact content shape was never
 # confirmed against live docs before this instrument was written and it may
@@ -86,7 +104,23 @@ line=$(jq -c --arg raw_flag "$RAW_FLAG" '
       stop_hook_active,
       is_interrupt,
       duration_ms,
-      background_tasks_count: (if (.background_tasks | type) == "array" then (.background_tasks | length) else null end)
+      background_tasks_count: (if (.background_tasks | type) == "array" then (.background_tasks | length) else null end),
+      background_tasks_shape: (
+        if (.background_tasks | type) == "array" then
+          [ .background_tasks[0:5][]
+            | (if type == "object" then . else {} end)
+            | {keys: keys}
+              + with_entries(select(
+                  (.key | IN("id","task_id","agent_id","shell_id","type","kind","task_type","agent_type","subagent_type","status","state","source","mode","tool_name"))
+                  and (
+                    ((.value | type) == "boolean")
+                    or ((.value | type) == "number")
+                    or (((.value | type) == "string") and (.value | test("^[A-Za-z0-9_.:-]{1,64}$")))
+                  )
+                ))
+          ]
+        else null end
+      )
     }
     + (
         if .message == null then {}
