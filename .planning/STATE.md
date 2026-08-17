@@ -129,7 +129,7 @@ Recent decisions affecting current work:
 - [minor/general] Show paused-container sessions in overlay instead of dropping them (2026-07-30) — idea da UAT C4: il motore state-file le tiene già (D-06), è solo rendering al flip di Phase 3
 - [minor/general] Startup check: refuse to start with clear error when hooks are not installed (2026-07-30) — proposta utente in UAT; candidato allo scope Phase 3 (post-flip un monitor senza hook è quasi cieco)
 - [minor/general] Ghost jsonl rows survive container kill via dir-fallback — consider SessionEnd tombstones (2026-07-30) — quirk legacy pre-esistente visto in UAT; lo state-writer sa che la sessione è finita ma il ponte legacy_origin ricopia il fantasma
-- [minor/general] Local session rows linger up to 1h after abrupt VS Code close (2026-08-17) — SessionEnd non emesso al kill del processo locale; serve un liveness check locale (PID nello state file?) analogo al gate docker, o drop anticipato delle righe stale-WAITING
+- [minor/general] Local host sessions are invisible to the monitor (2026-08-17) — hook silenti su Windows host (comandi bash/$HOME container-only) E scan() droppa le jsonl con sessionId non-container (monitor.py:1130-1141); decidere se le sessioni host sono in scope, poi hook portabili + liveness check PID
 - ~~[cosmetic/general] Remove dead project_name() helper in monitor.py~~ DONE 2026-08-06 (plan 03-01, Task 2) — confirmed zero call sites, deleted
 
 ### Blockers/Concerns
