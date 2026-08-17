@@ -615,6 +615,45 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
         obj = json.loads(raw)
         self.assertEqual(obj["background_tasks_count"], 1)
 
+    def test_all_subagent_in_flight_tasks_reach_monitor_as_working_grey(self):
+        """Rev.3 (case 17): a Stop whose in-flight background tasks are ALL
+        of type "subagent" resolves to working, and that verdict renders
+        through the real monitor.scan_state_files() as WORKING/#666/rank 2
+        with action "turn end" — the tracer proving the rule end to end.
+        Descriptor values (agent_type) are inspected but never captured."""
+        sid = "agent-only"
+        result = self._stop(sid, background_tasks=[
+            {"status": "running", "type": "subagent", "agent_type": "gsd-executor"},
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        raw = state_file.read_text(encoding="utf-8")
+        self.assertNotIn("gsd-executor", raw)
+        self.assertNotIn("subagent", raw)
+
+        obj = json.loads(raw)
+        self.assertEqual(obj["state"], "working")
+        self.assertEqual(obj["background_tasks_count"], 1)
+        self.assertEqual(
+            sorted(obj.keys()),
+            ["background_tasks_count", "cwd", "hostname", "last_event", "state", "ts", "ts_ms"],
+        )
+
+        orig_state_dir = monitor.STATE_DIR
+        monitor.STATE_DIR = _state_dir(self.home)
+        try:
+            rendered = monitor.scan_state_files(sessionid_to_label={sid: "my-label"})
+        finally:
+            monitor.STATE_DIR = orig_state_dir
+
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["status"], "WORKING")
+        self.assertEqual(rendered[0]["dot_color"], "#666")
+        self.assertEqual(rendered[0]["rank"], 2)
+        self.assertEqual(rendered[0]["action"], "turn end")
+
 
 # ---------------------------------------------------------------------------
 # GOAL 7 — The state writer is fully removable in one command (SW-03)
