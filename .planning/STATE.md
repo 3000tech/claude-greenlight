@@ -6,9 +6,9 @@ current_phase: 3
 current_phase_name: flip-to-default-cleanup
 status: verifying
 stopped_at: "Phase 3 executed: 4/4 plans + review-fix cycle, 21/21 must-haves verified, 236 tests green. Awaiting live UAT on the Windows machine (03-UAT.md)"
-last_updated: "2026-08-06T13:11:34.377Z"
-last_activity: 2026-08-06
-last_activity_desc: Phase 3 execution started
+last_updated: "2026-08-17T13:25:01.354Z"
+last_activity: 2026-08-17
+last_activity_desc: "Completed quick task 260817-i5n: background_tasks descriptor shape sampler + report + TEST-MATRIX rev.3"
 progress:
   total_phases: 3
   completed_phases: 2
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
 Plan: 4 of 4
 Status: Phase complete — ready for verification
-Last activity: 2026-08-07 — Completed quick task 260807-k0y: container identity in notification group key
+Last activity: 2026-08-17 — Completed quick task 260817-i5n: background_tasks descriptor sampler + TEST-MATRIX case #17 rev.3
 
 Progress: [█████████░] 91%
 
@@ -68,6 +68,7 @@ Progress: [█████████░] 91%
 | Phase 03 P02 | 19min | 3 tasks | 5 files |
 | Phase 03 P03 | 27min | 3 tasks | 6 files |
 | Phase 03-flip-to-default-cleanup P04 | 9min | 3 tasks | 9 files |
+| Phase quick-260817-i5n P01 | 10min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,8 @@ Recent decisions affecting current work:
 - [Phase 03-flip-to-default-cleanup]: [Phase 03-04]: README describes hooks as required, names the real per-session state file + working lock mechanism, and the honest degradation note names the per-session transcript fallback rather than overstating that the monitor stops reading transcripts entirely
 - [Phase 03-flip-to-default-cleanup]: [Phase 03-04]: docs/TEST-MATRIX.md and docs/RECERTIFICATION.md promoted out of .planning/ at D-10's authorized scale (one move + one short runbook); campaign machinery (per-version fixtures, automated smoke checklist) stays deferred
 - [Phase 03-flip-to-default-cleanup]: [Phase 03-04]: 03-UAT.md's Section H (D-04 needs_input parity gate) is written as blocking; the Teardown's --remove-auq-lock step depends on Section H passing first
+- [Phase ?]: [quick-260817-i5n]: event-logger.sh samples background_tasks descriptor shape (name allowlist + value-shape guard, capped at 5 entries) — deployed live; real samples show type field discriminates shell vs subagent, recorded as TEST-MATRIX case #17 rev.3 with no verdict change
+- [Phase ?]: [quick-260817-i5n]: scripts/bg-task-shape-report.sh aggregates sampled descriptor shapes/values and joins descriptor ids against known agent_id — used to gather rev.3 evidence, no state-writer.sh change shipped
 
 ### Pending Todos
 
@@ -145,6 +148,7 @@ Recent decisions affecting current work:
 | 260731-cgg | Session rows, compact chips and notifications show the disambiguated container name for duplicate-project sessions (display-only; sort/alias/divergence identity untouched) | 2026-07-31 | 1e07ee1 | [260731-cgg-session-rows-and-compact-chips-show-disa](./quick/260731-cgg-session-rows-and-compact-chips-show-disa/) |
 | 260807-iz2 | Group-gated notifications (hold/release, no notify while group siblings work) + append-only notifications.log of every sent/suppressed decision | 2026-08-07 | 7961105 | [260807-iz2-group-gated-notifications-sent-notificat](./quick/260807-iz2-group-gated-notifications-sent-notificat/) |
 | 260807-k0y | Notification group key includes container identity (hostname) — duplicate-project containers (nursy / nursy-2) page independently | 2026-08-07 | f04478d | [260807-k0y-notification-group-key-includes-containe](./quick/260807-k0y-notification-group-key-includes-containe/) |
+| 260817-i5n | Sample background_tasks descriptor shape (agent vs shell) in Stop payloads + TEST-MATRIX case #17 rev.3 — evidence for suppressing agent-only-bg false-positive notifications | 2026-08-17 | 83a2b19 | [260817-i5n-campiona-descrittori-background-tasks-ne](./quick/260817-i5n-campiona-descrittori-background-tasks-ne/) |
 
 ## Deferred Items
 
@@ -156,6 +160,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-06T14:02:02.059Z (Windows machine)
-Stopped at: 03-UAT live run 4/11 recorded PASS (Setup, A, B, C) — paused mid-UAT, resume at Section D on this machine
+Last session: 2026-08-17T13:25:01.251Z
+Stopped at: 03-UAT live run 4/11 recorded PASS (Setup, A, B, C) — paused mid-UAT, resume at Section D on this machine (quick task 260817-i5n completed in between, no impact on UAT scope)
 Resume file: .planning/phases/03-flip-to-default-cleanup/.continue-here.md
