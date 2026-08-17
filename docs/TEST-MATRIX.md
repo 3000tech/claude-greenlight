@@ -99,6 +99,101 @@ mechanism that does not exist yet.
   mentre un bg task finito è ancora in corso (build/test/install) mostra
   verde e notifica subito, col badge che continua a mostrare il processo
   attivo.
+- **Revisione (quick task 260817-i5n rev.3, 2026-08-17):**
+
+  **Episodio scatenante:** Stop alle 11:14:15Z sulla sessione 34518633
+  (yunoai, cwd `/workspace/cloudrun-jobs`) con `background_tasks_count: 2`,
+  entrambi i task background agenti gsd-planner in esecuzione; la sessione
+  si è ri-invocata da sola ~40s dopo (SubagentStop alle 11:15:56Z) tornando
+  a working — l'utente non ha mai dovuto intervenire. Un falso positivo
+  sotto rev.2, e corretto secondo la logica di rev.2 stessa — che è il
+  punto: quella logica non distingue una shell da un agente. Un secondo
+  campione dello stesso pattern è arrivato dopo la stesura del piano, stessa
+  sessione (34518633, yunoai): 13:05:40Z SubagentStart gsd-executor in
+  background, 13:05:44Z Stop con `background_tasks_count: 1`, 13:06:49Z
+  Notification idle_prompt (la notifica delle 15:06 locali arrivata
+  all'utente), poi l'executor ha continuato da solo e la sessione era di
+  nuovo working alle 13:07:56Z — l'ultimo messaggio assistant prima dello
+  Stop dichiarava esplicitamente l'intenzione di continuare da sola
+  ("Executor CZ-6 in corso — è l'ultimo. Quando finisce faccio il riepilogo
+  completo…").
+
+  **Ipotesi sotto verifica:** un background AGENT ri-invoca la sessione al
+  proprio completamento, quindi il turno è garantito continuare e uno Stop
+  che porta solo background task di tipo agente non deve nulla all'utente.
+  Una background SHELL non porta questa garanzia, quindi rev.2 resta
+  invariata per le shell.
+
+  **Metodo:** il logger diagnostico di Phase 1 ora campiona, dentro
+  `hooks/event-logger.sh`, i nomi di campo dei primi 5 descrittori di
+  `background_tasks` più un allowlist chiusa di valori enum/id-shaped —
+  mai testo di comando — sotto due guardie indipendenti (allowlist di 14
+  nomi + regex sulla forma del valore). `scripts/bg-task-shape-report.sh`
+  aggrega quanto già scritto nel log; il secondo percorso di evidenza è il
+  join tra gli id dei descrittori e gli `agent_id` già catturati per valore
+  su SubagentStart/SubagentStop.
+
+  **Evidenza** (output di `bash scripts/bg-task-shape-report.sh`, campionato
+  al momento della stesura — sono compresi sia campioni reali di sessioni
+  live sia un campione shell sintetico dello smoke-test del Task 1 e un
+  campione shell reale dalla shell di lunga durata avviata deliberatamente
+  nel Task 2):
+
+  ```
+  == background_tasks descriptor shape report ==
+  Stop lines: 149 (1 carried a non-empty background_tasks_shape sample)
+  SubagentStop lines: 349 (5 carried a non-empty background_tasks_shape sample)
+
+  -- Distinct descriptor field-name shapes (7 sampled entries total) --
+    [agent_type,description,id,status,type] x5
+    [command,description,id,status,type] x1
+    [id,status,type] x1
+
+  -- Observed values by allowlisted field --
+    agent_type: gsd-executor x5
+    id: aa41ecd2455219a1c x5, bne4m73nv x1, t1 x1
+    status: running x7
+    type: subagent x5, shell x2
+
+  -- Descriptor id -> known agent_id join (SubagentStart/SubagentStop) --
+    aa41ecd2455219a1c -> agent_type=gsd-executor
+  ```
+
+  Nota di onestà sulla provenienza: dei 2 campioni `type: shell`, uno (`t1`)
+  è sintetico (payload di smoke-test del Task 1), l'altro (`bne4m73nv`) è
+  reale — la shell `sleep 1260` avviata deliberatamente nel Task 2 per
+  questo stesso scopo. I 5 campioni `type: subagent` sono tutti reali,
+  dallo stesso agente gsd-executor in background su questa sessione, e il
+  suo id joina correttamente con l'`agent_id` già visto su
+  SubagentStart/SubagentStop. Il campo `type` distingue nettamente le due
+  classi in ogni campione osservato finora — ma il volume resta piccolo (2
+  shell, 1 agente distinto) e va confermato dal check umano post-turno
+  prima di considerarlo definitivo.
+
+  **Regola proposta, tre rami:**
+  - **(a)** se il descrittore porta un campo discriminante `type`/`kind`
+    (come osservato qui: `shell` vs `subagent`), la regola è che uno Stop i
+    cui task in volo sono TUTTI di tipo agente mappa a working, e qualsiasi
+    entry di tipo shell mantiene il waiting di oggi;
+  - **(b)** se il descrittore non porta un discriminante ma il suo id joina
+    a un `agent_id` noto, la stessa regola è implementabile solo con stato
+    di correlazione lato monitor — materialmente più complesso, decisione a
+    parte;
+  - **(c)** se né (a) né (b) valgono, rev.2 resta com'è e il falso positivo
+    va risolto altrove — nel gate delle notifiche, non nel verdetto di
+    stato.
+
+  I dati odierni indicano il ramo (a) come plausibile (discriminante `type`
+  presente e coerente su entrambe le classi), ma con campione ancora
+  piccolo — il check umano di questo task, dopo che la shell di lunga
+  durata e un nuovo agente in background avranno chiuso il proprio turno,
+  è quello che conferma o smentisce.
+
+  **Ambito — nessun cambio di verdetto qui:** `hooks/state-writer.sh` non è
+  toccato, lo Stop risolve ancora incondizionatamente a waiting,
+  `background_tasks_count` resta solo badge, e D-03 resta intatto per le
+  shell. Il cambio di verdetto (se il ramo (a) si conferma) è un task quick
+  di follow-up.
 
 ---
 
