@@ -8,7 +8,7 @@ status: verifying
 stopped_at: "Phase 3 executed: 4/4 plans + review-fix cycle, 21/21 must-haves verified, 236 tests green. Awaiting live UAT on the Windows machine (03-UAT.md)"
 last_updated: "2026-08-17T13:25:01.354Z"
 last_activity: 2026-08-17
-last_activity_desc: "Completed quick task 260817-i5n: background_tasks descriptor shape sampler + report + TEST-MATRIX rev.3"
+last_activity_desc: "Completed quick task 260817-ixs: rev.3 Stop verdict (agent-only bg -> working) implemented and deployed"
 progress:
   total_phases: 3
   completed_phases: 2
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
 Plan: 4 of 4
 Status: Phase complete — ready for verification
-Last activity: 2026-08-17 — Completed quick task 260817-i5n: background_tasks descriptor sampler + TEST-MATRIX case #17 rev.3
+Last activity: 2026-08-17 — Completed quick task 260817-ixs: rev.3 Stop verdict (agent-only bg → working) implemented and deployed
 
 Progress: [█████████░] 91%
 
@@ -149,6 +149,7 @@ Recent decisions affecting current work:
 | 260807-iz2 | Group-gated notifications (hold/release, no notify while group siblings work) + append-only notifications.log of every sent/suppressed decision | 2026-08-07 | 7961105 | [260807-iz2-group-gated-notifications-sent-notificat](./quick/260807-iz2-group-gated-notifications-sent-notificat/) |
 | 260807-k0y | Notification group key includes container identity (hostname) — duplicate-project containers (nursy / nursy-2) page independently | 2026-08-07 | f04478d | [260807-k0y-notification-group-key-includes-containe](./quick/260807-k0y-notification-group-key-includes-containe/) |
 | 260817-i5n | Sample background_tasks descriptor shape (agent vs shell) in Stop payloads + TEST-MATRIX case #17 rev.3 — evidence for suppressing agent-only-bg false-positive notifications | 2026-08-17 | 83a2b19 | [260817-i5n-campiona-descrittori-background-tasks-ne](./quick/260817-i5n-campiona-descrittori-background-tasks-ne/) |
+| 260817-ixs | Rev.3 Stop verdict implemented: all-subagent in-flight bg tasks → working (no notify), any shell/unknown → waiting; fail-safe + full truth-table tests, deployed live | 2026-08-17 | ec252d9 | [260817-ixs-stop-verdict-rev-3-soli-subagent-in-back](./quick/260817-ixs-stop-verdict-rev-3-soli-subagent-in-back/) |
 
 ## Deferred Items
 
