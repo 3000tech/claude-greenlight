@@ -189,11 +189,23 @@ mechanism that does not exist yet.
   durata e un nuovo agente in background avranno chiuso il proprio turno,
   è quello che conferma o smentisce.
 
-  **Ambito — nessun cambio di verdetto qui:** `hooks/state-writer.sh` non è
-  toccato, lo Stop risolve ancora incondizionatamente a waiting,
-  `background_tasks_count` resta solo badge, e D-03 resta intatto per le
-  shell. Il cambio di verdetto (se il ramo (a) si conferma) è un task quick
-  di follow-up.
+  **Esito — quick task 260817-ixs (2026-08-17):** ramo (a) confermato su 42
+  campioni live (`type: subagent` x30, `type: shell` x12, zero altri
+  valori, zero `type` mancanti). Regola come spedita: uno Stop i cui task
+  in volo sono TUTTI di tipo `subagent` risolve a working; qualsiasi entry
+  in volo che non sia un subagent confermato — shell, `type` mancante,
+  `type` sconosciuto — mantiene waiting; uno Stop senza alcun task in volo
+  mantiene waiting invariato. Direzione fail-safe: un'evidenza sconosciuta
+  non sopprime mai una notifica, risolve sempre a waiting. Via di fuga:
+  un verdetto working invecchiato oltre la finestra di heartbeat di 600
+  secondi recupera a WAITING, quindi un agente che non ri-invoca mai la
+  sessione produce una notifica in ritardo, non una notifica persa.
+
+  **Ambito — cambio di verdetto spedito qui:** il cambio di verdetto
+  descritto dal ramo (a) è stato implementato in `hooks/state-writer.sh`
+  dalla quick task 260817-ixs. `background_tasks_count` resta solo badge
+  (D-09 invariato) e D-03/rev.2 resta intatto per le shell — uno Stop con
+  solo shell in volo continua a risolvere a waiting esattamente come oggi.
 
 ---
 
