@@ -475,9 +475,12 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
                 self.assertEqual(obj["background_tasks_count"], 0)
 
     def test_stop_with_one_running_entry_produces_waiting_and_count_one(self):
-        """D-03/TEST-MATRIX case 17 rev.2: turn-end is badge-only — a
-        still-running background task no longer holds the verdict at
-        working, it only rides along in background_tasks_count."""
+        """D-03/TEST-MATRIX case 17: an untyped in-flight entry (no `type`
+        key) never qualifies as all-subagent, so rev.2's badge-only
+        behaviour holds — the still-running background task doesn't move
+        the verdict off waiting, it only rides along in
+        background_tasks_count. See rev.3's typed-subagent cases below for
+        the one case where the verdict DOES move."""
         sid = "one-running"
         result = self._stop(sid, background_tasks=[{"status": "running"}])
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -514,9 +517,13 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
         self.assertEqual(obj["state"], "waiting")
         self.assertEqual(obj["background_tasks_count"], 1)
 
-    def test_stop_never_produces_working_regardless_of_background_task_count(self):
-        """D-03: no Stop payload, for any background-task count, ever
-        produces a working verdict — parameterised over 0, 1 and 5."""
+    def test_stop_with_untyped_background_tasks_never_produces_working(self):
+        """D-03/rev.3: for payloads whose entries carry no `type` key at
+        all (none of these are a confirmed subagent), no background-task
+        count ever produces a working verdict — parameterised over 0, 1 and
+        5. Typed all-subagent payloads are the one case that DOES produce
+        working; see test_all_subagent_in_flight_tasks_reach_monitor_as_working_grey
+        and the qualifying-cases tests below."""
         cases = {
             "count-zero": [],
             "count-one": [{"status": "running"}],
@@ -653,6 +660,159 @@ class Goal6_TurnEndSemantics(_HomeTestCase):
         self.assertEqual(rendered[0]["dot_color"], "#666")
         self.assertEqual(rendered[0]["rank"], 2)
         self.assertEqual(rendered[0]["action"], "turn end")
+
+    def test_stop_qualifies_as_working_only_when_all_in_flight_entries_are_subagent(self):
+        """Rev.3 qualifying cases: two in-flight subagents -> working
+        (count 2); a completed shell + a failed shell alongside a running
+        subagent -> working too (count 1) — the in-flight filter runs
+        BEFORE the type check, so already-finished entries of any type
+        never count toward, or against, the all-subagent check."""
+        cases = {
+            "two-subagents": (
+                [
+                    {"status": "running", "type": "subagent"},
+                    {"status": "running", "type": "subagent"},
+                ],
+                2,
+            ),
+            "completed-failed-shell-plus-running-subagent": (
+                [
+                    {"status": "completed", "type": "shell"},
+                    {"status": "failed", "type": "shell"},
+                    {"status": "running", "type": "subagent"},
+                ],
+                1,
+            ),
+        }
+        for sid, (bg, expected_count) in cases.items():
+            with self.subTest(sid=sid):
+                result = self._stop(sid, background_tasks=bg)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = self._read(sid)
+                self.assertEqual(obj["state"], "working")
+                self.assertEqual(obj["background_tasks_count"], expected_count)
+
+    def test_stop_disqualifying_in_flight_types_stay_waiting(self):
+        """Rev.3 fail-safe direction: an in-flight subagent alongside any
+        non-confirmed-subagent entry (a shell, a missing `type` key, an
+        unrecognised `type` string, or a non-string `type`) never
+        qualifies as all-subagent — the whole Stop stays waiting. A
+        shell-only Stop stays waiting too, exactly rev.2's behaviour."""
+        cases = {
+            "subagent-plus-shell": (
+                [
+                    {"status": "running", "type": "subagent"},
+                    {"status": "running", "type": "shell"},
+                ],
+                2,
+            ),
+            "shell-only": (
+                [{"status": "running", "type": "shell"}],
+                1,
+            ),
+            "subagent-plus-missing-type": (
+                [
+                    {"status": "running", "type": "subagent"},
+                    {"status": "running"},
+                ],
+                2,
+            ),
+            "subagent-plus-unrecognised-type": (
+                [
+                    {"status": "running", "type": "subagent"},
+                    {"status": "running", "type": "future_kind"},
+                ],
+                2,
+            ),
+            "subagent-plus-non-string-type": (
+                [
+                    {"status": "running", "type": "subagent"},
+                    {"status": "running", "type": 5},
+                ],
+                2,
+            ),
+        }
+        for sid, (bg, expected_count) in cases.items():
+            with self.subTest(sid=sid):
+                result = self._stop(sid, background_tasks=bg)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = self._read(sid)
+                self.assertEqual(obj["state"], "waiting")
+                self.assertEqual(obj["background_tasks_count"], expected_count)
+
+    def test_stop_with_zero_in_flight_tasks_stays_waiting(self):
+        """Rev.3: no in-flight task at all — whether because the key is
+        absent, the array is empty, the array is replaced by a non-array
+        value, or every entry is completed/failed — is the ordinary
+        end-of-turn notify path and must stay waiting, count 0, exactly as
+        rev.2. The `length > 0` guard is what stops jq's vacuous
+        empty-array `all()` from misfiring true here."""
+        cases = {
+            "no-key": None,
+            "empty-array": [],
+            "only-completed-subagents": [
+                {"status": "completed", "type": "subagent"},
+                {"status": "failed", "type": "subagent"},
+            ],
+        }
+        for sid, bg in cases.items():
+            with self.subTest(sid=sid):
+                result = self._stop(sid, background_tasks=bg)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = self._read(sid)
+                self.assertEqual(obj["state"], "waiting")
+                self.assertEqual(obj["background_tasks_count"], 0)
+
+        sid = "non-array-bg"
+        result = self._stop(sid, background_tasks="not-an-array")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = self._read(sid)
+        self.assertEqual(obj["state"], "waiting")
+        self.assertEqual(obj["background_tasks_count"], 0)
+
+    def test_stop_with_hostile_non_object_entry_beside_running_subagent_stays_waiting(self):
+        """Rev.3 hostile-input guard: a bare string sitting in the array
+        next to a running subagent must not abort jq or qualify as
+        all-subagent — the `if type == "object" then . else {} end`
+        normalization turns it into an entry with no `type`, which fails
+        the all() check like any other unrecognised evidence. Exit 0, no
+        stdout, verdict stays waiting."""
+        sid = "hostile-entry"
+        result = self._stop(sid, background_tasks=[
+            "not-an-object", {"status": "running", "type": "subagent"},
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        obj = self._read(sid)
+        self.assertEqual(obj["state"], "waiting")
+
+    def test_qualifying_subagent_stop_still_never_leaks_descriptor_values(self):
+        """Schema-freeze guard applied to the qualifying (working) path,
+        not just the tracer's: a sentinel secret in `command`/`description`
+        must never reach the file, `agent_type` must never reach the file,
+        and the record still holds exactly the seven documented keys."""
+        sid = "qualifying-no-leak"
+        secret_marker = "SUPER-SECRET-COMMAND-rm-dash-rf-slash"
+        result = self._stop(sid, background_tasks=[
+            {
+                "status": "running",
+                "type": "subagent",
+                "agent_type": "gsd-planner",
+                "command": secret_marker,
+                "description": secret_marker,
+            },
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        raw = state_file.read_text(encoding="utf-8")
+        self.assertNotIn(secret_marker, raw)
+        self.assertNotIn("gsd-planner", raw)
+        obj = json.loads(raw)
+        self.assertEqual(obj["state"], "working")
+        self.assertEqual(
+            sorted(obj.keys()),
+            ["background_tasks_count", "cwd", "hostname", "last_event", "state", "ts", "ts_ms"],
+        )
 
 
 # ---------------------------------------------------------------------------
