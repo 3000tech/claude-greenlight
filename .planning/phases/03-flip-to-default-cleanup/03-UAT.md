@@ -50,7 +50,7 @@ checked out at the flipped commit.
    ```bash
    jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("working-lock\\.sh"))] | length' ~/.claude/settings.json   # expect 3
    jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("state-writer\\.sh"))] | length' ~/.claude/settings.json      # expect 10
-   jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("event-logger\\.sh"))] | length' ~/.claude/settings.json       # expect 24 (hooks/hook-events.json length)
+   jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("event-logger\\.sh"))] | length' ~/.claude/settings.json       # expect 22 (hooks/hook-events.json length; was 24 until 2026-08-18 quick-260818-ejg dropped WorktreeCreate/WorktreeRemove — see hooks/install.sh header)
    jq '[.hooks | to_entries[] | .value[] | select(.hooks[]?.command? // "" | test("auq-lock\\.sh"))] | length' ~/.claude/settings.json           # expect 0 — a FRESH install registers none
    ```
    If this container's `~/.claude/settings.json` carries a pre-flip `auq-lock.sh` registration
