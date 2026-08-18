@@ -290,7 +290,7 @@ explicitly, not left blank — a blank cell is indistinguishable from a section 
 | E — ghost suppression | | | |
 | F — paused container | | | |
 | G — badge-only background rule | 2026-08-18 | 2.1.234 | PASS — two live runs (09:55Z and 10:04Z): at turn end with a 120s background sleep in flight the row went green immediately with the ◉1 badge (state file `waiting`, `background_tasks_count: 1`); toast held per the gate (`suppressed, reason: background_tasks` in notifications.log). Run 1: toast released 55s later (`gate_cleared`, on the idle Notification). Run 2: user replied before release → held toast correctly discarded (`session_resumed`). User confirmed grey→green+badge live and ratified the held-toast semantics (notification = "fully idle"); pass condition above updated to match |
-| H — the retirement gate (BLOCKING) | | | |
+| H — the retirement gate (BLOCKING) | 2026-08-18 | 2.1.234 | PASS — Trigger 1 (tool permission prompt, manual mode): 13:12:15Z PermissionRequest on a real Bash call → state file sampled live at `needs_input`/`PermissionRequest` for 26 consecutive 1s samples until the user denied; repeated 13:14:10Z (approved, with `Notification permission_prompt` at +6s). Trigger 2 (AskUserQuestion modal): 10:14:26Z PermissionRequest + 10:14:32Z Notification → notifications.log `needs_input → sent`; overlay rendered green (= "your turn"), correct per the July design. This is the pre-flip existing-install case: auq-lock is still registered, but the state FILE is written by state-writer.sh alone, so both verdicts are the state-writer's independent path — the condition the section requires before teardown |
 | I — preserved fixes | | | |
 | Teardown | | | |
 
