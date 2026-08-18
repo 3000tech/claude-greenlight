@@ -26,9 +26,17 @@ INSTALL_SH = HOOKS_DIR / "install.sh"
 EVENT_LOGGER_SH = HOOKS_DIR / "event-logger.sh"
 SETTINGS_SNIPPET = HOOKS_DIR / "settings-snippet.json"
 HOOK_EVENTS_JSON = HOOKS_DIR / "hook-events.json"
+STATE_WRITER_EVENTS_JSON = HOOKS_DIR / "state-writer-events.json"
 
 LOCK_PATTERN = r"working-lock\.sh|auq-lock\.sh"
 LOGGER_PATTERN = r"event-logger\.sh"
+
+# Delegation hooks: Claude Code expects a hook configured on either of these
+# events to create/remove the worktree itself and print its path on stdout.
+# A passive logger there breaks `git worktree add`/`remove` outright
+# (quick-260818-ejg). One module-level constant so every assertion below
+# derives from the same source instead of scattering string literals.
+WORKTREE_DELEGATION_EVENTS = {"WorktreeCreate", "WorktreeRemove"}
 
 
 def setUpModule() -> None:
@@ -661,6 +669,127 @@ class Goal8_BackgroundTaskDescriptorShapeSampling(_HomeTestCase):
         [line] = _read_log_lines(self.home)
         self.assertIn("background_tasks_shape", line)
         self.assertEqual(line["background_tasks_shape"][0]["type"], "shell")
+
+
+# ---------------------------------------------------------------------------
+# GOAL 9 — The two worktree DELEGATION hooks never get a passive logger
+# attached, a stale attachment from a pre-fix install is repaired on the
+# next plain install, and a co-located foreign command survives untouched
+# (quick-260818-ejg)
+# ---------------------------------------------------------------------------
+
+def _stale_worktree_settings() -> dict:
+    """A settings.json shaped like a pre-fix install: WorktreeCreate holds
+    ONLY the logger command; WorktreeRemove co-locates a foreign command
+    (the real co-tenant, GSD's worktree-path-guard) alongside the logger
+    command in the SAME entry object — exactly what an entry-level filter
+    would destroy as collateral."""
+    return {
+        "hooks": {
+            "WorktreeCreate": [
+                {"hooks": [
+                    {"type": "command", "command": 'bash "$HOME/.claude/hooks/event-logger.sh"', "timeout": 2},
+                ]},
+            ],
+            "WorktreeRemove": [
+                {"hooks": [
+                    {"type": "command", "command": "node /gsd/gsd-worktree-path-guard.js", "timeout": 5},
+                    {"type": "command", "command": 'bash "$HOME/.claude/hooks/event-logger.sh"', "timeout": 2},
+                ]},
+            ],
+        }
+    }
+
+
+def _seed_settings(home: Path, settings: dict) -> None:
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    _settings_path(home).write_text(json.dumps(settings), encoding="utf-8")
+
+
+class Goal9_WorktreeDelegationHooksStayLoggerFree(_HomeTestCase):
+    def test_upgrade_path_prunes_stale_worktreecreate_and_deletes_the_key(self):
+        _seed_settings(self.home, _stale_worktree_settings())
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        settings = _load_settings(self.home)
+        # Key absence, not an empty-array comparison — a leftover
+        # "WorktreeCreate": [] husk is still readable by Claude Code as "a
+        # hook is configured here" and must not survive.
+        self.assertNotIn("WorktreeCreate", settings["hooks"])
+
+    def test_collateral_safety_foreign_worktreeremove_command_survives_logger_pruned(self):
+        _seed_settings(self.home, _stale_worktree_settings())
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        settings = _load_settings(self.home)
+        self.assertIn("WorktreeRemove", settings["hooks"])
+        remove_cmds = [
+            h["command"]
+            for group in settings["hooks"]["WorktreeRemove"]
+            for h in group.get("hooks", [])
+        ]
+        self.assertIn("node /gsd/gsd-worktree-path-guard.js", remove_cmds)
+        self.assertEqual(len([c for c in remove_cmds if re.search(LOGGER_PATTERN, c)]), 0)
+
+    def test_fresh_install_creates_no_worktree_key_and_logger_count_matches_event_list(self):
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        settings = _load_settings(self.home)
+        for event in WORKTREE_DELEGATION_EVENTS:
+            self.assertNotIn(event, settings["hooks"])
+        self.assertEqual(len(_commands_matching(settings, LOGGER_PATTERN)), len(_hook_events()))
+
+    def test_idempotent_second_install_leaves_pruned_state_unchanged(self):
+        _seed_settings(self.home, _stale_worktree_settings())
+        _run_install(self.home)
+        result = _run_install(self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        settings = _load_settings(self.home)
+        self.assertNotIn("WorktreeCreate", settings["hooks"])
+        remove_cmds = [
+            h["command"]
+            for group in settings["hooks"]["WorktreeRemove"]
+            for h in group.get("hooks", [])
+        ]
+        self.assertEqual(remove_cmds, ["node /gsd/gsd-worktree-path-guard.js"])
+
+    def test_guard_rejects_reinstated_delegation_event_before_any_write(self):
+        with TemporaryDirectory() as copy_dir:
+            copied_hooks = Path(copy_dir) / "hooks"
+            shutil.copytree(HOOKS_DIR, copied_hooks)
+            events = json.loads((copied_hooks / "hook-events.json").read_text(encoding="utf-8"))
+            events.append("WorktreeCreate")
+            (copied_hooks / "hook-events.json").write_text(json.dumps(events), encoding="utf-8")
+
+            result = subprocess.run(
+                ["bash", str(copied_hooks / "install.sh")],
+                env=_base_env(self.home),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(result.stderr.strip())
+            self.assertFalse(_settings_path(self.home).exists())
+            self.assertFalse((self.home / ".claude" / "hooks").exists())
+
+        # The repo's own event list must be untouched by the copytree test.
+        self.assertNotIn("WorktreeCreate", _hook_events())
+
+    def test_source_json_files_contain_no_worktree_delegation_event_name(self):
+        hook_events = set(_hook_events())
+        state_writer_events = set(json.loads(STATE_WRITER_EVENTS_JSON.read_text(encoding="utf-8")))
+        self.assertTrue(WORKTREE_DELEGATION_EVENTS.isdisjoint(hook_events))
+        self.assertTrue(WORKTREE_DELEGATION_EVENTS.isdisjoint(state_writer_events))
+
+        snippet_text = SETTINGS_SNIPPET.read_text(encoding="utf-8")
+        for event in WORKTREE_DELEGATION_EVENTS:
+            self.assertNotIn(event, snippet_text)
 
 
 if __name__ == "__main__":
