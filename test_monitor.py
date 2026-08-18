@@ -979,8 +979,10 @@ class Goal6d_AliasKeyedByContainer(MonitorTestBase):
 
 class Goal6c_NotificationToggles(unittest.TestCase):
     """Two independent notification switches persist through the config file:
-    "local" (toast+audio+flash on this machine) and "telegram" (phone push).
-    A pre-split config carrying only the old "sound" key migrates into "local".
+    "local" mutes audio only on this machine (quick-260818-bfm narrowed its
+    scope — the toast and the taskbar flash always fire regardless of it)
+    and "telegram" governs the phone push. A pre-split config carrying only
+    the old "sound" key migrates into "local".
     """
 
     def setUp(self) -> None:
@@ -1015,6 +1017,8 @@ class Goal6c_NotificationToggles(unittest.TestCase):
 
     def test_legacy_sound_key_migrates_into_local(self):
         # Pre-split config: only the old audio-only "sound" key, set to muted.
+        # The migration is now semantically exact: the legacy key gated audio
+        # only, and so does "local" after quick-260818-bfm narrowed its scope.
         monitor.CONFIG_FILE.write_text('{"sound": false}', encoding="utf-8")
         cfg = monitor.load_config()
         self.assertFalse(cfg["local"])
@@ -2855,6 +2859,122 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
         records = self._read_records()
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["outcome"], "sent")
+
+
+class Goal28_LocalSwitchMutesAudioOnly(unittest.TestCase):
+    """`local` now gates the audio channel alone (quick-260818-bfm): the
+    toast and the taskbar flash always fire regardless of the switch, only
+    the audio helper is skipped when muted. Telegram stays on its own
+    independent gate in both directions. Two further cases drive the real
+    (unbound) `_notify_audio`/`_flash_taskbar` methods against a minimal
+    Fake on this non-Windows host, proving Task 2's extraction preserves
+    behaviour rather than merely relocating code: winsound is absent here,
+    so `_notify_audio` must fall through to the Tk `bell` fallback, and
+    `_flash_taskbar` must return False without touching ctypes (the
+    `os.name == "nt"` guard moves inside the helper)."""
+
+    def _fake_app(self, **config):
+        calls = {
+            "toast": [],
+            "audio": [],
+            "flash": [],
+            "telegram": [],
+            "bell": [],
+            "after": [],
+        }
+
+        class Root:
+            def bell(root_self):
+                calls["bell"].append(True)
+
+            def after(root_self, ms, fn, *args):
+                calls["after"].append((ms, fn, args))
+
+            def update_idletasks(root_self):
+                pass
+
+        class Fake:
+            def __init__(self):
+                self.config = dict(config)
+                self._session_aliases = {}
+                self.root = Root()
+                self.calls = calls
+
+            def _alias_key(self, key):
+                return key
+
+            def _dismiss_session_toast(self, key):
+                pass
+
+            def _notify_toast(self, title, body, key=None):
+                calls["toast"].append((title, body, key))
+                return True
+
+            def _notify_audio(self):
+                calls["audio"].append(True)
+                return (True, "stub")
+
+            def _flash_taskbar(self):
+                calls["flash"].append(True)
+                return False
+
+            def _send_telegram(self, title, body):
+                calls["telegram"].append((title, body))
+
+        return Fake()
+
+    def test_local_false_toast_still_fires(self):
+        app = self._fake_app(local=False, telegram=True)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        expected_title, expected_body = monitor.notification_text("proj", 600, "")
+        self.assertEqual(app.calls["toast"], [(expected_title, expected_body, None)])
+
+    def test_local_false_audio_never_called(self):
+        app = self._fake_app(local=False, telegram=True)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        self.assertEqual(app.calls["audio"], [])
+
+    def test_local_false_flash_still_fires(self):
+        app = self._fake_app(local=False, telegram=True)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        self.assertEqual(len(app.calls["flash"]), 1)
+
+    def test_local_true_all_three_fire(self):
+        app = self._fake_app(local=True, telegram=True)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        self.assertEqual(len(app.calls["toast"]), 1)
+        self.assertEqual(len(app.calls["audio"]), 1)
+        self.assertEqual(len(app.calls["flash"]), 1)
+
+    def test_local_key_absent_defaults_to_all_three(self):
+        app = self._fake_app(telegram=True)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        self.assertEqual(len(app.calls["toast"]), 1)
+        self.assertEqual(len(app.calls["audio"]), 1)
+        self.assertEqual(len(app.calls["flash"]), 1)
+
+    def test_local_false_telegram_true_still_pushes(self):
+        app = self._fake_app(local=False, telegram=True)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        self.assertEqual(len(app.calls["telegram"]), 1)
+
+    def test_local_true_telegram_false_stays_off(self):
+        app = self._fake_app(local=True, telegram=False)
+        monitor.MonitorApp._notify(app, "proj", 600, key=None)
+        self.assertEqual(app.calls["telegram"], [])
+
+    def test_real_flash_taskbar_on_non_windows_host(self):
+        app = self._fake_app()
+        result = monitor.MonitorApp._flash_taskbar(app)
+        self.assertFalse(result)
+
+    def test_real_notify_audio_falls_back_to_tk_bell(self):
+        app = self._fake_app()
+        ok, channel = monitor.MonitorApp._notify_audio(app)
+        self.assertTrue(ok)
+        self.assertTrue(channel)
+        self.assertEqual(len(app.calls["bell"]), 1)
+        self.assertEqual(app.calls["after"], [])
 
 
 if __name__ == "__main__":
