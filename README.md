@@ -22,7 +22,7 @@ Claude Greenlight reads the session transcripts under `~/.claude` on the **host*
 ## What it does
 
 - **Always-on-top overlay** (standard or compact) listing every active session with a project label and its live state: working, ready for you, or waiting for input
-- **Notifies you** — toast, sound, taskbar flash — when a session that has been working for a while becomes ready
+- **Notifies you** — toast, sound, taskbar flash — when a session that has been working for a while becomes ready. The bell button mutes the sound only; the toast and the taskbar flash always fire.
 - **When several sessions work the same project inside one container** (e.g. a main checkout plus a worktree), the monitor waits for the last one to finish before paging you, instead of notifying on every intermediate checkpoint — two containers of the same project (e.g. a duplicated devcontainer) are independent jobs and page you separately
 - **A session waiting on you mid-turn never shows as "working"** — permission prompts and `AskUserQuestion` modals surface the instant they appear, through the same hooks that drive state detection
 - **Optional Telegram push** to your phone, independent of local notifications
@@ -82,7 +82,7 @@ bash scripts/headless-linux.sh
 | Key | Meaning |
 |-----|---------|
 | `mode` | `standard` or `compact` overlay |
-| `local` | master switch for toast + sound + taskbar flash |
+| `local` | silences the sound only — the toast and the taskbar flash always fire regardless of this switch |
 | `telegram` | enable/disable Telegram push |
 | `aliases` | per-container display names, keyed by container identity (managed from the UI) — survive `/clear`, `/resume` and CLI restarts |
 | `group_gate` | set `false` to disable the same-project notification wait above; every notification decision — sent or suppressed — is always logged to `~/.claude/notifications.log` regardless of this setting |
