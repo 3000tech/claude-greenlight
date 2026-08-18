@@ -178,9 +178,14 @@ still running.
 
 **Observe:** watch the overlay at the moment the turn ends.
 
-**Pass condition:** the overlay goes green and notifies (toast/sound/taskbar flash) **immediately**
-at turn end — `background_tasks_count > 0` no longer holds the state WORKING — while the ◉N
-badge continues to show the background task's count until it finishes.
+**Pass condition:** the overlay goes green **immediately** at turn end — `background_tasks_count > 0`
+no longer holds the state WORKING — while the ◉N badge continues to show the background task's
+count until it finishes. The toast is **deliberately held** while background tasks are in flight
+(gate reason `background_tasks`) and released only once the session is fully idle; if the user
+replies first, the held toast is discarded (`session_resumed`). Semantics decided with the user
+2026-08-18: a notification means "Claude is fully idle" — background work in flight is still work,
+so no popup yet. The immediate-notify wording this section originally carried predates that
+decision and is superseded.
 
 ---
 
@@ -284,7 +289,7 @@ explicitly, not left blank — a blank cell is indistinguishable from a section 
 | D — the bridge | | | |
 | E — ghost suppression | | | |
 | F — paused container | | | |
-| G — badge-only background rule | | | |
+| G — badge-only background rule | 2026-08-18 | 2.1.234 | PASS — two live runs (09:55Z and 10:04Z): at turn end with a 120s background sleep in flight the row went green immediately with the ◉1 badge (state file `waiting`, `background_tasks_count: 1`); toast held per the gate (`suppressed, reason: background_tasks` in notifications.log). Run 1: toast released 55s later (`gate_cleared`, on the idle Notification). Run 2: user replied before release → held toast correctly discarded (`session_resumed`). User confirmed grey→green+badge live and ratified the held-toast semantics (notification = "fully idle"); pass condition above updated to match |
 | H — the retirement gate (BLOCKING) | | | |
 | I — preserved fixes | | | |
 | Teardown | | | |
