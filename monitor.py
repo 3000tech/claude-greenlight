@@ -458,6 +458,41 @@ def parse_geometry(geom: str) -> tuple[int, int, int, int] | None:
         return None
 
 
+# GetSystemMetrics indices describing the bounding rectangle of ALL attached
+# displays (the "virtual screen"), not just the primary. The two origin
+# metrics are negative whenever a display sits left of or above the primary.
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
+
+def _virtual_screen_rect() -> tuple[int, int, int, int] | None:
+    """Bounding box of the desktop across every attached display (Windows only).
+
+    Queried live (never cached) so that plugging or unplugging a monitor is
+    noticed the next time a geometry is sanitized, rather than on the next
+    reinstall. Returns None off Windows, or on any failure/unusable result,
+    so callers fall back to the primary screen rect.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        get_metrics = ctypes.windll.user32.GetSystemMetrics
+        get_metrics.restype = ctypes.c_int
+        x = get_metrics(SM_XVIRTUALSCREEN)
+        y = get_metrics(SM_YVIRTUALSCREEN)
+        w = get_metrics(SM_CXVIRTUALSCREEN)
+        h = get_metrics(SM_CYVIRTUALSCREEN)
+        if w <= 0 or h <= 0:
+            return None
+        return (x, y, w, h)
+    except Exception:
+        return None
+
+
 def _extract_session_id(last_line: str | None) -> str | None:
     if not last_line:
         return None
@@ -1871,22 +1906,39 @@ class MonitorApp:
         # especially across monitor switches.
         self.root.attributes("-topmost", True)
 
+    def _screen_bounds(self) -> tuple[int, int, int, int]:
+        """Rect to validate saved geometry against: the virtual screen (the
+        bounding box of every attached display) on Windows, falling back to
+        the primary screen rect off Windows or when the Win32 call fails —
+        the exact rect `_sanitize_geometry()` used to build inline, which is
+        what keeps behaviour unchanged on non-Windows hosts.
+        """
+        rect = _virtual_screen_rect()
+        if rect is not None:
+            return rect
+        return (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+
     def _sanitize_geometry(self, geom: str) -> str:
         """Discard saved geometry that lands fully off-screen.
 
         Why: an unplugged second monitor leaves the window stuck at coordinates
-        the current screen can't render. Taskbar icon shows, window doesn't.
-        Require at least 60×30 px of overlap with the primary screen rect —
-        less than that and the title bar / restore handle aren't reachable.
+        nothing can render — taskbar icon visible, window not. Checked against
+        the virtual-screen rectangle spanning every attached display (not just
+        the primary), so a window deliberately parked on a secondary monitor
+        survives a restart. Unplugging that secondary collapses the rect back
+        to the primary, so a now-orphaned geometry is still reset. Require at
+        least 60×30 px of overlap with that rect — less than that and the
+        title bar / restore handle aren't reachable. Off Windows (or on any
+        Win32 failure) the rect is just the primary screen, so this reproduces
+        today's primary-only verdicts exactly.
         """
         parsed = parse_geometry(geom)
         if parsed is None:
             return self._default_geometry(self.mode)
         w, h, x, y = parsed
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        visible_w = max(0, min(x + w, sw) - max(x, 0))
-        visible_h = max(0, min(y + h, sh) - max(y, 0))
+        sx, sy, sw, sh = self._screen_bounds()
+        visible_w = max(0, min(x + w, sx + sw) - max(x, sx))
+        visible_h = max(0, min(y + h, sy + sh) - max(y, sy))
         if visible_w < 60 or visible_h < 30:
             return self._default_geometry(self.mode)
         return geom

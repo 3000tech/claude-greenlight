@@ -3006,6 +3006,14 @@ class Goal29_SavedGeometrySurvivesSecondaryScreen(unittest.TestCase):
             def _default_geometry(self, mode):
                 return "DEFAULT"
 
+            def _screen_bounds(self):
+                # Looked up lazily (only when actually called) so this stays
+                # inert during RED, when monitor.MonitorApp has no such
+                # attribute yet; once Task 2 adds the real method, an
+                # unstubbed Fake delegates to it for the end-to-end fallback
+                # case instead of a fixed stub.
+                return monitor.MonitorApp._screen_bounds(self)
+
         if bounds is not None:
             Fake._screen_bounds = lambda self: bounds
 
