@@ -8,7 +8,7 @@ status: verifying
 stopped_at: "Phase 3 executed: 4/4 plans + review-fix cycle, 21/21 must-haves verified, 236 tests green. Awaiting live UAT on the Windows machine (03-UAT.md)"
 last_updated: "2026-08-18T08:27:31.922Z"
 last_activity: 2026-08-18
-last_activity_desc: "Completed quick task 260818-c9o: saved window position on secondary screen survives restart"
+last_activity_desc: "Completed quick task 260818-ejg: installer no longer attaches event-logger to worktree delegation hooks"
 progress:
   total_phases: 3
   completed_phases: 2
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 Phase: 3 (flip-to-default-cleanup) — EXECUTING
 Plan: 4 of 4
 Status: Phase complete — ready for verification
-Last activity: 2026-08-18 — Completed quick task 260818-c9o: saved window position on secondary screen survives restart
+Last activity: 2026-08-18 — Completed quick task 260818-ejg: installer no longer attaches event-logger to worktree delegation hooks
 
 Progress: [█████████░] 91%
 
@@ -153,6 +153,7 @@ Recent decisions affecting current work:
 | 260817-ixs | Rev.3 Stop verdict implemented: all-subagent in-flight bg tasks → working (no notify), any shell/unknown → waiting; fail-safe + full truth-table tests, deployed live | 2026-08-17 | ec252d9 | [260817-ixs-stop-verdict-rev-3-soli-subagent-in-back](./quick/260817-ixs-stop-verdict-rev-3-soli-subagent-in-back/) |
 | 260818-bfm | Local notifications switch mutes audio only — toast and taskbar flash always fire even when muted | 2026-08-18 | d5ac45b | [260818-bfm-local-switch-mutes-audio-only-toast-alwa](./quick/260818-bfm-local-switch-mutes-audio-only-toast-alwa/) |
 | 260818-c9o | Saved window position on a secondary screen survives restart — off-screen check now uses the virtual-screen rect | 2026-08-18 | c953cee | [260818-c9o-saved-window-position-on-secondary-scree](./quick/260818-c9o-saved-window-position-on-secondary-scree/) |
+| 260818-ejg | Installer no longer attaches event-logger to WorktreeCreate/WorktreeRemove (delegation hooks); guard + prune for existing installs | 2026-08-18 | 4329624 | [260818-ejg-installer-must-not-attach-event-logger-t](./quick/260818-ejg-installer-must-not-attach-event-logger-t/) |
 | 11 | x | 2026-08-18 | 14a6b7a | — |
 
 ## Deferred Items
