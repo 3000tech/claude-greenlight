@@ -13,14 +13,34 @@
 #   event-logger.sh  Phase 1 diagnostic instrument (see hooks/hook-events.json)
 #                    → appends one JSONL line per hook event to
 #                    ~/.claude/hook-events.log. Registered on every event name
-#                    listed in hooks/hook-events.json — 24 names, the
-#                    RESEARCH.md baseline (2026-07-28), used because a live
-#                    fetch of code.claude.com/docs/en/hooks was not available
-#                    from this execution session. Re-check that list against
-#                    the live docs before treating "no line for event X" as a
-#                    confirmed negative finding rather than a catalog gap.
-#                    Registering on an event name a given Claude Code build
-#                    does not know is expected to be inert — not a defect.
+#                    listed in hooks/hook-events.json — 22 names, the
+#                    RESEARCH.md baseline (2026-07-28) minus WorktreeCreate/
+#                    WorktreeRemove (removed 2026-08-18, quick-260818-ejg).
+#                    Re-check that list against the live docs before treating
+#                    "no line for event X" as a confirmed negative finding
+#                    rather than a catalog gap. Registering on an event name a
+#                    given Claude Code build does not know is expected to be
+#                    inert — not a defect.
+#
+#                    WorktreeCreate/WorktreeRemove are DELEGATION hooks, not
+#                    notification hooks: when any hook is configured on them,
+#                    Claude Code stops running `git worktree add`/`remove`
+#                    itself and expects the configured hook to create/remove
+#                    the worktree and print its path on stdout. A passive
+#                    logger prints nothing, so every worktree operation failed
+#                    with `WorktreeCreate hook failed` — and because the
+#                    delegation contract breaks before dispatch, no
+#                    `WorktreeCreate` line ever reached hook-events.log either,
+#                    so the logger was pure cost with zero diagnostic value on
+#                    these two events. This file is the place that ban is
+#                    documented because hook-events.json is strict JSON with
+#                    no comment syntax. The installer now refuses to register
+#                    on either event (see DELEGATION_EVENTS guard below) and
+#                    prunes stale registrations left by an earlier install
+#                    that ran before this fix. `--remove-logger`'s sweep below
+#                    is generic and already removes these too on demand; the
+#                    new default-path prune pass exists because the DEFAULT
+#                    install path previously had no removal step at all.
 #                    Diagnostic-only, disposable: run this script with
 #                    `--remove-logger` to strip every logger entry from
 #                    settings.json (and then delete
@@ -56,6 +76,13 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 SNIPPET="$HERE/settings-snippet.json"
 EVENTS_FILE="$HERE/hook-events.json"
 LOGGER_CMD='bash "$HOME/.claude/hooks/event-logger.sh"'
+# Delegation hooks: Claude Code expects a hook configured on either of these
+# events to create/remove the worktree itself and print its path on stdout.
+# A passive logger there breaks `git worktree add`/`remove` outright (see the
+# event-logger.sh header paragraph above for the full story). One constant
+# feeds both the pre-write guard and the prune pass below, so the banned list
+# and the cleaned list can never drift apart.
+DELEGATION_EVENTS='["WorktreeCreate","WorktreeRemove"]'
 STATE_WRITER_EVENTS_FILE="$HERE/state-writer-events.json"
 STATE_WRITER_CMD='bash "$HOME/.claude/hooks/state-writer.sh"'
 
@@ -127,6 +154,18 @@ if [ "$mode" = "--remove-auq-lock" ]; then
   mv "$SETTINGS.tmp" "$SETTINGS"
   echo "removed: auq-lock.sh entries from $SETTINGS (backup at $SETTINGS.bak.*)"
   exit 0
+fi
+
+# Guard: refuse to proceed if hook-events.json has re-acquired a delegation
+# event. Runs before any file is copied or created, so a tripped guard leaves
+# the machine untouched — no settings.json, no ~/.claude/hooks/ directory.
+if ! jq -e --argjson bad "$DELEGATION_EVENTS" 'any(.[]; . as $e | $bad | index($e) != null) | not' "$EVENTS_FILE" >/dev/null; then
+  echo "error: $EVENTS_FILE lists a delegation event (WorktreeCreate/WorktreeRemove)." >&2
+  echo "Claude Code expects a hook configured on either of these events to create or" >&2
+  echo "remove the worktree itself and print its path on stdout. A passive logger" >&2
+  echo "there breaks every 'git worktree add'/'remove' with a 'hook failed' error." >&2
+  echo "Remove both names from hook-events.json before re-running this installer." >&2
+  exit 1
 fi
 
 mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/working-locks" "$CLAUDE_DIR/monitor-state"
@@ -202,6 +241,41 @@ jq --argjson events "$(cat "$EVENTS_FILE")" --arg cmd "$LOGGER_CMD" '
 python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
 mv "$SETTINGS.tmp" "$SETTINGS"
 echo "registered: event-logger.sh on $(jq 'length' "$EVENTS_FILE") event(s) in $SETTINGS"
+
+# Prune stale event-logger.sh registrations from the two delegation events.
+# The registration pass above only touches events present in hook-events.json
+# today, so dropping a name from that file is invisible to a settings.json
+# that already carries the stale attachment from an earlier install — this
+# pass is the missing other half. Filters at the individual hooks[].command
+# level (not the whole entry object), the same reason --remove-auq-lock and
+# drop_working_cmd do: an entry-level filter would delete a co-located
+# foreign command (e.g. GSD's gsd-worktree-path-guard.js) sitting in the same
+# entry as collateral damage. An entry is dropped only once its own command
+# list empties, and the event KEY itself is deleted once its whole array
+# empties, so no "WorktreeCreate": [] husk survives that Claude Code could
+# still read as "a hook is configured here". A no-op on an already-clean
+# settings.json creates and immediately deletes the key, so re-running
+# install stays safe.
+delegation_prune_count=$(jq --argjson bad "$DELEGATION_EVENTS" '
+  [ $bad[] as $event | (.hooks[$event] // [])[]?.hooks[]? | select(.command // "" | test("event-logger\\.sh")) ] | length
+' "$SETTINGS" 2>/dev/null || echo 0)
+case "$delegation_prune_count" in
+  ''|*[!0-9]*) delegation_prune_count=0 ;;
+esac
+jq --argjson bad "$DELEGATION_EVENTS" '
+  def is_logger_cmd: (.command // "" | test("event-logger\\.sh"));
+  reduce $bad[] as $event (.;
+    .hooks[$event] = ((.hooks[$event] // [])
+      | map(.hooks |= (map(select(is_logger_cmd | not))))
+      | map(select((.hooks // []) | length > 0)))
+    | (if ((.hooks[$event] // []) | length) == 0 then del(.hooks[$event]) else . end)
+  )
+' "$SETTINGS" > "$SETTINGS.tmp"
+python3 -c "import json; json.load(open('$SETTINGS.tmp'))"
+mv "$SETTINGS.tmp" "$SETTINGS"
+if [ "$delegation_prune_count" -gt 0 ]; then
+  echo "pruned: $delegation_prune_count stale event-logger.sh registration(s) from WorktreeCreate/WorktreeRemove in $SETTINGS"
+fi
 
 # Register state-writer.sh on every event name in state-writer-events.json —
 # the D-08 verdict event set (see header comment above). Kept as its own jq

@@ -20,7 +20,5 @@
   "Elicitation",
   "ElicitationResult",
   "ConfigChange",
-  "FileChanged",
-  "WorktreeCreate",
-  "WorktreeRemove"
+  "FileChanged"
 ]
