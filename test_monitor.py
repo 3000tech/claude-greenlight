@@ -2977,5 +2977,128 @@ class Goal28_LocalSwitchMutesAudioOnly(unittest.TestCase):
         self.assertEqual(app.calls["after"], [])
 
 
+class Goal29_SavedGeometrySurvivesSecondaryScreen(unittest.TestCase):
+    """User-confirmed symptom (quick-260818-c9o): restore works when the
+    window was parked on the PRIMARY screen and fails on every other
+    screen — `_sanitize_geometry()` measured overlap against the primary
+    rect only, so a window left on any secondary display scored zero
+    overlap, was judged orphaned, and snapped back to the default
+    bottom-right corner on every restart. The reset path itself still
+    exists for genuinely orphaned coordinates: fully outside the virtual
+    rect, or valid yesterday but now outside it because the secondary
+    display was unplugged.
+    """
+
+    def _fake_app(self, bounds=None, primary=(1920, 1080)):
+        class Root:
+            def winfo_screenwidth(root_self):
+                return primary[0]
+
+            def winfo_screenheight(root_self):
+                return primary[1]
+
+        class Fake:
+            mode = "standard"
+
+            def __init__(self):
+                self.root = Root()
+
+            def _default_geometry(self, mode):
+                return "DEFAULT"
+
+        if bounds is not None:
+            Fake._screen_bounds = lambda self: bounds
+
+        return Fake()
+
+    # -- multi-monitor keep verdicts (these fail today) ----------------
+
+    def test_secondary_left_of_primary_kept(self):
+        app = self._fake_app(bounds=(-1920, 0, 3840, 1080))
+        geom = "300x200+-1800+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), geom)
+
+    def test_secondary_right_of_primary_kept(self):
+        app = self._fake_app(bounds=(0, 0, 3840, 1080))
+        geom = "300x200+2400+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), geom)
+
+    def test_secondary_above_primary_kept(self):
+        app = self._fake_app(bounds=(0, -1080, 1920, 2160))
+        geom = "300x200+100+-900"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), geom)
+
+    # -- reset verdicts (must keep the verdict they have today) --------
+
+    def test_fully_outside_virtual_rect_resets(self):
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        geom = "300x200+5000+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), "DEFAULT")
+
+    def test_unplugged_secondary_collapses_rect_and_resets(self):
+        # Valid yesterday on a secondary display; today the rect has
+        # collapsed back to the primary and these coordinates are orphaned.
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        geom = "300x200+2400+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), "DEFAULT")
+
+    def test_malformed_geometry_resets(self):
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, "garbage"), "DEFAULT")
+
+    # -- 60x30 threshold boundary pairs (must keep passing) -------------
+
+    def test_horizontal_overlap_exactly_60_kept(self):
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        geom = "300x200+1860+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), geom)
+
+    def test_horizontal_overlap_59_resets(self):
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        geom = "300x200+1861+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), "DEFAULT")
+
+    def test_vertical_overlap_exactly_30_kept(self):
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        geom = "300x200+100+1050"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), geom)
+
+    def test_vertical_overlap_29_resets(self):
+        app = self._fake_app(bounds=(0, 0, 1920, 1080))
+        geom = "300x200+100+1051"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), "DEFAULT")
+
+    # -- seam contract: real _screen_bounds / _virtual_screen_rect ------
+
+    def test_virtual_screen_rect_none_on_non_windows_host(self):
+        self.assertIsNone(monitor._virtual_screen_rect())
+
+    def test_virtual_screen_rect_none_when_win32_entry_point_unreachable(self):
+        with mock.patch.object(monitor.os, "name", "nt"):
+            self.assertIsNone(monitor._virtual_screen_rect())
+
+    def test_screen_bounds_returns_virtual_rect_verbatim(self):
+        app = self._fake_app()
+        with mock.patch.object(
+            monitor, "_virtual_screen_rect", return_value=(-1920, 0, 3840, 1080)
+        ):
+            self.assertEqual(
+                monitor.MonitorApp._screen_bounds(app), (-1920, 0, 3840, 1080)
+            )
+
+    def test_screen_bounds_falls_back_to_primary_when_virtual_rect_none(self):
+        app = self._fake_app()
+        with mock.patch.object(monitor, "_virtual_screen_rect", return_value=None):
+            self.assertEqual(monitor.MonitorApp._screen_bounds(app), (0, 0, 1920, 1080))
+
+    def test_end_to_end_non_windows_fallback_still_resets_left_of_primary(self):
+        # No _screen_bounds stub on the Fake: both real methods run on this
+        # Linux host, proving the primary-only verdict survives exactly
+        # where the virtual rect is unavailable.
+        app = self._fake_app()
+        geom = "300x200+-1800+100"
+        self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), "DEFAULT")
+
+
 if __name__ == "__main__":
     unittest.main()
