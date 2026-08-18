@@ -1718,7 +1718,7 @@ class MonitorApp:
         self.config = load_config()
         self.mode = self.config["mode"]
         self.root = tk.Tk()
-        self.root.title("Claude Monitor")
+        self.root.title("Claude Greenlight")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1a1a1a")
         self.root.overrideredirect(False)
