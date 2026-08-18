@@ -199,10 +199,14 @@ DEFAULT_CONFIG = {
     # Geometry is computed at runtime (bottom-right of the active screen).
     "standard": "",
     "compact": "",
-    # Master switch for local notifications (toast + audio + taskbar flash).
+    # Audio-only mute for local notifications (quick-260818-bfm narrowed its
+    # scope): the toast popup and the taskbar flash always fire — this
+    # switch silences the beep/chime alone.
     "local": True,
-    # Telegram push to the phone. Independent of "local" — silence one without
-    # the other (e.g. mute the desk but keep the phone, or vice versa).
+    # Telegram push to the phone. Independent of "local" — silencing the
+    # desk's audio leaves the toast/flash visible AND still pages the phone;
+    # silence one without the other (mute the desk but keep the phone, or
+    # vice versa).
     "telegram": True,
     # {alias_key: label} — runtime session labels, persisted so they survive
     # a monitor restart AND a sessionId rotation (/clear, /resume, CLI
@@ -226,7 +230,8 @@ def load_config() -> dict:
     if cfg["mode"] not in ("standard", "compact"):
         cfg["mode"] = "standard"
     # Migrate the pre-split "sound" key (it gated audio only) into the new
-    # "local" master switch when an older config is loaded.
+    # "local" switch when an older config is loaded — semantically exact
+    # now that "local" itself gates audio only (quick-260818-bfm).
     if "local" not in data and isinstance(data.get("sound"), bool):
         cfg["local"] = data["sound"]
     if not isinstance(cfg["local"], bool):
@@ -1917,6 +1922,8 @@ class MonitorApp:
         self._apply_mode()
 
     def _refresh_local_btn(self) -> None:
+        # 🔔/🔕 mutes audio only (quick-260818-bfm) — the toast and the
+        # taskbar flash keep firing either way.
         on = bool(self.config.get("local", True))
         self.local_btn.config(text="🔔" if on else "🔕",
                               fg="#9cb4d6" if on else "#666")
@@ -2276,8 +2283,9 @@ class MonitorApp:
         Our own Toplevel is always visible, doesn't care about system notification
         policies, and stays consistent across Windows/WSL.
 
-        Only reached when local notifications are on (the audio cue fires alongside),
-        so the toast auto-dismisses after a few seconds or on click.
+        Always reached, regardless of the "local" switch (quick-260818-bfm) —
+        that switch mutes the audio cue only, so the toast fires even on a
+        muted machine and auto-dismisses after a few seconds or on click.
         """
         try:
             # Replace any prior toast for this session — avoids stacking duplicates
@@ -2356,7 +2364,8 @@ class MonitorApp:
 
         Credentials come from .env at repo root. If either key is missing the
         call is a no-op — Telegram is an optional addition to the local
-        notification stack (toast+audio+flash always fire first).
+        notification stack (toast and flash always fire first; audio fires
+        too unless the "local" switch has muted it).
         """
         env = load_env()
         token = env.get("TELEGRAM_BOT_TOKEN")
@@ -2387,52 +2396,38 @@ class MonitorApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _notify(self, label: str, elapsed_sec: int, key: str | None = None) -> None:
-        """Toast + audio beep + taskbar flash when a long-running session is ready for user input.
+    def _notify_audio(self) -> tuple[bool, str]:
+        """Audio cue: walk NOTIFY_WAV_FILES, play the first one that exists.
+        MessageBeep / Tk bell are silent-OK fallbacks for odd systems.
 
-        Two independent gates: "local" governs toast/audio/flash on this machine,
-        "telegram" governs the phone push. Either can be silenced without the other.
+        Only reached from `_notify()` when the "local" switch is on — the
+        toast and taskbar flash fire regardless of it (quick-260818-bfm),
+        this helper is the one channel the switch actually gates.
         """
         verbose = "--test-notify" in sys.argv
-        local_on = bool(self.config.get("local", True))
-        # Append the user's per-session alias when set, so two sessions sharing
-        # a project name (e.g. two `yunoai-france`) are still tellable apart.
-        alias = self._session_aliases.get(self._alias_key(key), "") if key else ""
-        toast_title, toast_body = notification_text(label, elapsed_sec, alias)
-        # Telegram fires regardless of the local switch — the whole point of the
-        # phone push is to reach you when you're away from the desk (local muted).
-        if self.config.get("telegram", True):
-            self._send_telegram(toast_title, toast_body)
-        toast_ok = self._notify_toast(toast_title, toast_body, key=key) if local_on else False
-        if verbose:
-            print(f"[notify] local={'on' if local_on else 'off'} "
-                  f"toast={'ok' if toast_ok else 'skip/FAIL'}", file=sys.stderr)
-        # Audio: walk NOTIFY_WAV_FILES, play the first one that exists.
-        # MessageBeep / Tk bell are silent-OK fallbacks for odd systems.
         audio_ok = False
         audio_channel = "none"
         replay_fn = None
-        if local_on:
+        try:
+            import winsound
+            SND_ASYNC = 0x0001
+            SND_FILENAME = 0x00020000
+            for wav in NOTIFY_WAV_FILES:
+                if os.path.exists(wav) and winsound.PlaySound(wav, SND_FILENAME | SND_ASYNC):
+                    audio_ok, audio_channel = True, f"PlaySound:{os.path.basename(wav)}"
+                    replay_fn = lambda w=wav: winsound.PlaySound(w, SND_FILENAME | SND_ASYNC)
+                    break
+            if not audio_ok:
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                audio_ok, audio_channel = True, "MessageBeep"
+        except Exception as e:
+            if verbose:
+                print(f"[notify] winsound failed: {e}", file=sys.stderr)
             try:
-                import winsound
-                SND_ASYNC = 0x0001
-                SND_FILENAME = 0x00020000
-                for wav in NOTIFY_WAV_FILES:
-                    if os.path.exists(wav) and winsound.PlaySound(wav, SND_FILENAME | SND_ASYNC):
-                        audio_ok, audio_channel = True, f"PlaySound:{os.path.basename(wav)}"
-                        replay_fn = lambda w=wav: winsound.PlaySound(w, SND_FILENAME | SND_ASYNC)
-                        break
-                if not audio_ok:
-                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
-                    audio_ok, audio_channel = True, "MessageBeep"
-            except Exception as e:
-                if verbose:
-                    print(f"[notify] winsound failed: {e}", file=sys.stderr)
-                try:
-                    self.root.bell()
-                    audio_ok, audio_channel = True, "Tk bell"
-                except Exception:
-                    pass
+                self.root.bell()
+                audio_ok, audio_channel = True, "Tk bell"
+            except Exception:
+                pass
         if verbose:
             print(f"[notify] audio={'ok' if audio_ok else 'FAIL'} via={audio_channel}",
                   file=sys.stderr)
@@ -2449,14 +2444,24 @@ class MonitorApp:
                 if n > 1:
                     self.root.after(NOTIFY_REPEAT_INTERVAL_MS, _replay, n - 1)
             self.root.after(NOTIFY_REPEAT_INTERVAL_MS, _replay)
-        # Taskbar flash (Windows only, continues until window gains focus).
-        # Ensure the window is fully realized before asking the OS to flash it.
+        return audio_ok, audio_channel
+
+    def _flash_taskbar(self) -> bool:
+        """Taskbar flash (Windows only, continues until window gains focus).
+        Ensure the window is fully realized before asking the OS to flash it.
+
+        Unconditional: called from `_notify()` regardless of the "local"
+        switch (quick-260818-bfm) — the switch mutes audio only, so muting
+        the desk no longer blinds the taskbar too. On a non-Windows host
+        this returns False without touching ctypes.
+        """
+        verbose = "--test-notify" in sys.argv
         try:
             self.root.update_idletasks()
         except Exception:
             pass
         flash_ok = False
-        if local_on and os.name == "nt":
+        if os.name == "nt":
             try:
                 import ctypes
                 from ctypes import wintypes
@@ -2490,6 +2495,40 @@ class MonitorApp:
             except Exception as e:
                 if verbose:
                     print(f"[notify] FlashWindowEx failed: {e}", file=sys.stderr)
+        return flash_ok
+
+    def _notify(self, label: str, elapsed_sec: int, key: str | None = None) -> None:
+        """Toast + audio beep + taskbar flash when a long-running session is ready for user input.
+
+        Three independent gates: "local" mutes audio only on this machine —
+        the toast and the taskbar flash always fire regardless of it
+        (quick-260818-bfm narrowed the switch's reach) — and "telegram"
+        governs the phone push. Any one of the three can be silenced
+        without affecting the other two.
+        """
+        verbose = "--test-notify" in sys.argv
+        local_on = bool(self.config.get("local", True))
+        # Append the user's per-session alias when set, so two sessions sharing
+        # a project name (e.g. two `yunoai-france`) are still tellable apart.
+        alias = self._session_aliases.get(self._alias_key(key), "") if key else ""
+        toast_title, toast_body = notification_text(label, elapsed_sec, alias)
+        # Telegram fires regardless of the local switch — the whole point of the
+        # phone push is to reach you when you're away from the desk (local muted).
+        if self.config.get("telegram", True):
+            self._send_telegram(toast_title, toast_body)
+        # Toast always fires — "local" gates audio only, never the popup.
+        toast_ok = self._notify_toast(toast_title, toast_body, key=key)
+        if verbose:
+            print(f"[notify] local={'on' if local_on else 'off'} "
+                  f"toast={'ok' if toast_ok else 'skip/FAIL'}", file=sys.stderr)
+        if local_on:
+            audio_ok, audio_channel = self._notify_audio()
+        else:
+            audio_ok, audio_channel = False, "muted"
+            if verbose:
+                print("[notify] audio=skip (local muted)", file=sys.stderr)
+        # Flash always fires — "local" gates audio only, never the taskbar flash.
+        flash_ok = self._flash_taskbar()
         if verbose:
             print(f"[notify] flash={'ok' if flash_ok else 'FAIL'} label={label} elapsed={elapsed_sec}s",
                   file=sys.stderr)
