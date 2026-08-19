@@ -269,8 +269,8 @@ explicitly, not left blank — a blank cell is indistinguishable from a section 
 
 | Section | Date | CC version | Outcome |
 |---|---|---|---|
-| Setup — PC | | | |
-| Setup — devbox | | | |
+| Setup — PC | 2026-08-19 | 2.1.234 | DONE — `bash hooks/install.sh` run live (state-writer with idle_prompt guard deployed, 10 events registered, settings backup on disk); baseline captured: needs_input 27, gate_cleared 10. Monitor restart pending (user, ↻) |
+| Setup — devbox | 2026-08-19 | 2.1.235 | DONE (remote via Tailscale ssh) — repo checked out on feat/phase-4-notification-truth, `hooks/install.sh` run (idle_prompt guard live), `machine_name: macbook-devbox` pinned in config (WR-01), pre-v1.0 monitor stopped, headless self-test OK, relaunched detached (1 process up, survived ssh close). Baseline: needs_input 40, gate_cleared 24. Updated for THIS phase's verification only — final rollout state belongs to Phase 6 (OPS-01) |
 | A — idle ping changes nothing | | | |
 | B — permission prompt still pages | | | |
 | C — AskUserQuestion still pages | | | |
