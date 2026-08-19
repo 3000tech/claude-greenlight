@@ -2,7 +2,7 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Remote Notifications
-status: planning
+status: verifying
 last_updated: "2026-08-19T09:58:34.178Z"
 last_activity: 2026-08-19
 progress:
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-08-19 — Milestone v1.1 started
+Phase: 4 of 6 (notification-truth) — code-complete
+Plan: 2 of 2 complete
+Status: Awaiting live UAT (04-UAT.md — overnight Section F is the blocking gate)
+Last activity: 2026-08-19 — Phase 4 executed: 2/2 plans, review fixed (WR-02), verifier 10/10 human_needed
 
 ## Performance Metrics
 
