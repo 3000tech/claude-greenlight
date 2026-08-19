@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-19T15:28:38.616Z",
+  "phase": "04",
+  "phase_name": "notification-truth",
+  "phase_dir": ".planning/phases/04-notification-truth",
+  "plan": 2,
+  "task": 11,
+  "total_tasks": 11,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Plan 04-01 — idle_prompt guard in state-writer.sh (NOTIF-01/02) + Goal10/Goal30 tests + TEST-MATRIX", "status": "done", "commit": "c570595..f614ff3"},
+    {"id": 2, "name": "Plan 04-02 — host on every notification title (NOTIF-03), README, 04-UAT.md runbook", "status": "done", "commit": "0beddfd..ea400e2"},
+    {"id": 3, "name": "Code review (0 Critical, 2 Warning) + WR-02 fix (sanitize origin_host before blank-check); WR-01 handled operationally in UAT setup", "status": "done", "commit": "346581d"},
+    {"id": 4, "name": "Verifier — 10/10 code-level must-haves, status human_needed (only SC-4 open)", "status": "done", "commit": "52f5c27"},
+    {"id": 5, "name": "Live deploy PC — hooks/install.sh run against the shared ~/.claude (idle_prompt guard live); monitor restarted by user (titles show '@ MATTEO')", "status": "done", "commit": "05199b2"},
+    {"id": 6, "name": "Live deploy devbox via Tailscale ssh — branch checked out, hooks installed, machine_name pinned, pre-v1.0 monitor stopped, headless relaunched (1 proc, survived ssh close)", "status": "done", "commit": "05199b2"},
+    {"id": 7, "name": "UAT Sections A-E recorded PASS", "status": "done", "commit": "6f90281"},
+    {"id": 8, "name": "Phase 5 design discussion with user — transport, notification ownership, mobile serving decided; alternatives rejected on record", "status": "done", "commit": "6e2689d"},
+    {"id": 9, "name": "Phase 5 research — 05-RESEARCH.md (address discovery, firewall, endpoint architecture, unreachable semantics, payload shape)", "status": "done", "commit": "812c2c7"}
+  ],
+  "remaining_tasks": [
+    {"id": 10, "name": "UAT Section F — OVERNIGHT ACCEPTANCE (BLOCKING, phase 4's fourth success criterion): compare notification logs against the pre-night baselines on BOTH machines", "status": "not_started"},
+    {"id": 11, "name": "If F passes: record F, flip 04-UAT.md to status complete, 04-VERIFICATION.md human_needed -> passed, update STATE.md, merge feat/phase-4-notification-truth into main, phase transition", "status": "not_started"},
+    {"id": 12, "name": "Phase 5 planning — /gsd-plan-phase 5 on the existing 05-CONTEXT.md + 05-RESEARCH.md (no plans written yet)", "status": "not_started"}
+  ],
+  "blockers": [
+    {"description": "Phase 4 cannot close until the overnight Section F verdict is recorded — it is the phase's fourth ROADMAP success criterion and the only open item (verifier: human_needed)", "type": "human_action", "workaround": "None needed; the data accumulates on its own overnight. The verdict is computed from logs, not from user observation."}
+  ],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {"action": "Nothing before the verdict. On resume, run the Section F comparison first (commands and baselines are in .continue-here.md).", "context": "nursy is running a self-resuming loop session on the devbox overnight — the exact workload that produced ~20 illegitimate pushes on the night of 2026-08-18/19", "blocking": true},
+    {"action": "Local cleanup on the Windows host when convenient: `docker stop uat-hookless` and remove the Temp\\claude-hookless copy (leftovers from the v1.0 Section D rig)", "context": "harmless, unrelated to any current measurement", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "Phase 5 transport is peer-to-peer: every machine optionally runs the same read-only endpoint exposing its own state and lists the peers it wants to see", "rationale": "The user's always-on machine is the devbox, not the PC, so a PC-centred hub would leave the phone panel dead whenever the PC is off; the symmetric design also serves MOBILE-01 from the same component and keeps the single-machine experience untouched", "phase": "05"},
+    {"decision": "Endpoint binds the Tailscale address by default, is read-only and state-only (never transcript content); LAN fallback documented honestly; no external hosting, ever", "rationale": "User constraint: nothing on the public internet. Tailnet membership already provides encryption and device identity, so no per-pair key management is needed", "phase": "05"},
+    {"decision": "Notification ownership: visual channels (toast/flash) come from the panel you are looking at; Telegram comes only from the session's home machine", "rationale": "Removes duplicates by construction rather than by negotiation, and keeps phone pushes alive while the PC is off", "phase": "05"},
+    {"decision": "OPS-01 resolved in advance: the devbox headless instance is NOT retired — it runs its own state logic, owns its Telegram pushes, and hosts the endpoint", "rationale": "Follows directly from the ownership rule above", "phase": "05"},
+    {"decision": "Development happens on feat/* branches; main is merge-only (config git.branching_strategy=phase)", "rationale": "User instruction 2026-08-19 after v1.0 close put working commits straight on main", "phase": "04"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "Run the Section F comparison: count needs_input and gate_cleared in ~/.claude/notifications.log on the devbox (via Tailscale ssh) and on this PC, compare against the pre-night baselines (devbox 40/24, PC 27/10), and inspect every overnight record with outcome 'sent' for legitimacy.",
+  "context_notes": "Phase 4 is code-complete and DEPLOYED LIVE on both machines; the only thing left is reading the overnight evidence. A one-shot cron wakeup was scheduled for 07:26 to do this automatically, but it is session-only and dies when the session exits — so on resume the Section F check must be run by hand (the .continue-here.md carries the exact commands). Current branch is feat/phase-5-devbox-overlay, which was branched off feat/phase-4-notification-truth and therefore contains all phase-4 commits; the phase-4 branch itself is pushed and is what gets merged into main once F passes. Phase 5 has context + research committed but NO plans yet."
+}
