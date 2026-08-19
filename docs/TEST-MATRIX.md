@@ -27,7 +27,7 @@ Expected states: `working` (grey), `waiting` (green, notify), `needs_input`
 | 1 | Turn start | Submit any prompt | working | `UserPromptSubmit` | — | 2026-07-29 / cc 2.1.220 / CONFERMATO — fire su ogni prompt (14 righe, 3 sessioni, run opportunistico) |
 | 2 | Normal turn end (text reply) | Short Q&A prompt | waiting | `Stop` | Verify `Stop` fires AFTER rendering (would fix early-notify by construction) | 2026-07-29 / cc 2.1.220 / PARZIALE — Stop fire affidabile a fine turno (10/10 turni); sub-domanda "dopo il rendering" richiede ancora confronto visivo con overlay |
 | 3 | ⚠ Long multi-tool turn (10+ min) | Big task, many tool calls | working throughout | `PostToolUse` heartbeat | Gaps > heartbeat window during pure thinking/generation stretches? | 2026-07-29 / cc 2.1.220 / PARZIALE — heartbeat = PreToolUse/PostToolUse + NUOVO evento PostToolBatch (tool result batchati, porta tool_calls); osservato gap muto di 29s in pura generazione testo (PostToolBatch 09:33:04 → Stop 09:33:33); turno 10+min non ancora esercitato. AGG h13: heartbeat include anche PostToolUseFailure (tool falliti emettono evento, 4 osservati, porta error/duration_ms/is_interrupt) |
-| 4 | ⚠ Permission prompt | Tool not in allowlist (e.g. dangerous rm) | needs_input | `Notification` | Does it fire for ALL prompt types (Bash, MCP, file writes)? | 2026-07-29 / cc 2.1.220 / CONFERMATO — all apparizione del prompt: PreToolUse + PermissionRequest ISTANTANEI; Notification(notification_type=permission_prompt) arriva ~6s dopo (prima Notification su 1300+ righe). needs_input hook-nativo via PermissionRequest, più tempestivo e affidabile di Notification (su cui poggia l attuale fix auq-lock). In bypassPermissions il prompt non esiste proprio |
+| 4 | ⚠ Permission prompt | Tool not in allowlist (e.g. dangerous rm) | needs_input | `Notification` | Does it fire for ALL prompt types (Bash, MCP, file writes)? | 2026-07-29 / cc 2.1.220 / CONFERMATO — all apparizione del prompt: PreToolUse + PermissionRequest ISTANTANEI; Notification(notification_type=permission_prompt) arriva ~6s dopo (prima Notification su 1300+ righe). needs_input hook-nativo via PermissionRequest, più tempestivo e affidabile di Notification (su cui poggia l attuale fix auq-lock). In bypassPermissions il prompt non esiste proprio. AGG plan 04-01 (2026-08-19, D-01): verdetto corretto — Notification produce needs_input SOLO quando `notification_type` non è esattamente `idle_prompt`; l'idle ping ("Claude has been idle 60s") non scrive più nulla nello state file. PermissionRequest resta il segnale tempestivo e autoritativo per un prompt reale, invariato — vedi sezione 4 per l'episodio e la decisione complete |
 | 5 | Permission answered → resumes | Approve the prompt in #4; also test DENY (Claude continues with a refusal message) | working | next `PostToolUse`? `PreToolUse`? | Window between approval and next event where state is stale; deny path has no tool execution at all | 2026-07-29 / cc 2.1.220 / CONFERMATO — approva: PostToolUse marca la ripresa nell istante, nessuna finestra stale. Nega: dopo PermissionRequest silenzio hook TOTALE — PermissionDenied mai fire (0 su tutta la campagna), niente Stop: il turno muore come un Esc → stesso fallback staleness |
 | 6 | ⚠ AskUserQuestion modal | Ask Claude to use AskUserQuestion | needs_input | No PreToolUse/PostToolUse hook fires — research-confirmed via issues 28273, 12605, 15872; awaiting live confirmation on tester's version | auq-lock remains the needs_input source — research-confirmed, not yet live-confirmed | 2026-07-29 / cc 2.1.220 / SMENTITA LA RICERCA — il modale AUQ EMETTE PreToolUse(tool_name=AskUserQuestion) + PermissionRequest nello stesso istante (prima occorrenza su 600+ eventi); le issue 28273/12605/15872 valevano per versioni precedenti. needs_input derivabile hook-nativamente: PreToolUse/PermissionRequest(AUQ)=aperto → PostToolUse(AUQ)=chiuso. auq-lock potenzialmente superfluo nel design Phase 2 |
 | 7 | AUQ answered → resumes | Answer the modal in #6 | working | `UserPromptSubmit`? `PostToolUse`? | | 2026-07-29 / cc 2.1.220 / CONFERMATO — la risposta al modale emette PostToolUse(tool_name=AskUserQuestion) al momento della risposta (+PostToolBatch); nessun UserPromptSubmit |
@@ -206,6 +206,60 @@ mechanism that does not exist yet.
   dalla quick task 260817-ixs. `background_tasks_count` resta solo badge
   (D-09 invariato) e D-03/rev.2 resta intatto per le shell — uno Stop con
   solo shell in volo continua a risolvere a waiting esattamente come oggi.
+
+- **Revisione (Phase 4 plan 04-01, 2026-08-19) — l'eccezione idle_prompt:**
+
+  **Episodio:** lo stesso campione delle 13:05:44Z/13:06:49Z già narrato
+  sopra (rev.3, sessione 34518633/yunoai) — Stop con
+  `background_tasks_count: 1` seguito ~65s dopo da una Notification
+  `notification_type: idle_prompt` — si è rivelato, con una notte di dati
+  aggiuntivi, il sintomo di un problema più ampio: la notte 2026-08-18→19
+  sul devbox ha prodotto 45/45 eventi Notification di tipo `idle_prompt` (0
+  `permission_prompt` reali) e ~20 push inviati a una sessione in loop
+  auto-ripreso che non ha mai avuto bisogno dell'utente. Su questa stessa
+  macchina, `~/.claude/hook-events.log` porta lo stesso segno (31
+  `idle_prompt` contro 2 `permission_prompt`) e `~/.claude/notifications.log`
+  conta 10 record `outcome: sent, reason: gate_cleared, type: needs_input`
+  generati da idle ping — la gate leak, dieci volte.
+
+  **Meccanismo, verificato dal set di chiavi del payload reale:** una
+  Notification `idle_prompt` porta esattamente `cwd, hook_event_name,
+  message, notification_type, prompt_id, session_id, transcript_path` e
+  **nessuna chiave `background_tasks`**. Il vecchio ramo condiviso
+  `PermissionRequest|Notification) state="needs_input"` scriveva quindi due
+  cose in un colpo solo: il verdetto `needs_input` E, per l'assenza della
+  chiave, `background_tasks_count: 0` — esattamente la condizione che
+  `gate_notification()` legge per rilasciare un hold aperto su lavoro
+  background ancora in volo.
+
+  **Decisione (D-01, NOTIF-01):** l'idle ping è ignorato in modo netto — la
+  Notification non scrive stato quando (e solo quando)
+  `notification_type` è esattamente il letterale `idle_prompt`; nessun
+  timestamp aggiornato, nessun heartbeat di liveness, nessun marker
+  separato. Direzione fail-safe (invariata da ogni altra guardia in questo
+  file): un `notification_type` assente, vuoto, sconosciuto o non-stringa
+  continua a produrre `needs_input` come oggi — sovra-notificare è
+  recuperabile, il silenzio no. Solo il letterale esatto viene ignorato.
+
+  **Decisione (D-02, NOTIF-02):** un hold aperto sul gate delle
+  notifiche si rilascia solo quando il lavoro background è davvero
+  terminato (la prossima scrittura di stato con `background_tasks_count: 0`
+  mentre la sessione è ancora waiting) — mai più su un idle ping ignorato,
+  perché ignorato significa che il record su disco non cambia affatto. Il
+  self-resume (`session_resumed`) e lo scadere massimo
+  (`NOTIFY_GATE_MAX_HOLD_SEC`) restano invariati.
+
+  **Alternativa scartata, registrata perché non venga "migliorata" più
+  avanti:** registrare l'hook con un matcher `permission_prompt` in
+  `state-writer-events.json` invece di filtrare dentro lo script. Scartata
+  perché fallisce verso il silenzio — un futuro `notification_type` mai
+  visto smetterebbe di scrivere `needs_input` del tutto. La guardia in
+  script fallisce verso la notifica — resta l'unica direzione fail-safe
+  accettabile qui.
+
+  **Chiude:** la gate_cleared leak su idle ping — i 10 record
+  `gate_cleared` esistenti in `~/.claude/notifications.log` su questa
+  macchina prima del fix non hanno più un percorso di generazione.
 
 ---
 
