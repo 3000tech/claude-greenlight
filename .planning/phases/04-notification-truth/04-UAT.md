@@ -90,10 +90,23 @@ phase's fourth success criterion depends on it.
    bash hooks/install.sh
    ```
 
-4. **Stop the running pre-v1.0 greenlight process** on the devbox (find it however it was started —
+4. **Set the machine name in the devbox monitor's config** (WR-01 from 04-REVIEW.md: inside a
+   container, `socket.gethostname()` falls back to a container-id-shaped string — exactly the
+   confusion the host label exists to remove — so the headless deployment must pin its name):
+   ```bash
+   python3 - <<'PY'
+   import json, os
+   p = os.path.expanduser("~/.claude-monitor-config.json")
+   d = json.load(open(p)) if os.path.exists(p) else {}
+   d["machine_name"] = "macbook-devbox"
+   json.dump(d, open(p, "w"), indent=2)
+   PY
+   ```
+
+5. **Stop the running pre-v1.0 greenlight process** on the devbox (find it however it was started —
    `ps aux | grep monitor.py` or the terminal/session it's attached to — and stop it).
 
-5. **Relaunch it with the headless launcher:**
+6. **Relaunch it with the headless launcher:**
    ```bash
    bash scripts/headless-linux.sh
    ```
@@ -104,7 +117,7 @@ phase's fourth success criterion depends on it.
    Expect `self-test OK`. If it fails, resolve that before proceeding — an overnight run against a
    monitor that never came up produces no data at all, not just a failed test.
 
-6. **Confirm it came up:** the process is running and (if reachable) the overlay renders live
+7. **Confirm it came up:** the process is running and (if reachable) the overlay renders live
    sessions from this devbox.
 
 State plainly in the Recording table when this step runs: the devbox instance is being updated for

@@ -1489,12 +1489,16 @@ def notification_host(session: dict, local_name: str) -> str:
     `origin_host` nor a pathological `machine_name` config value can inject
     extra lines into a Telegram message or unbound a toast title.
     """
-    origin = session.get("origin_host") if isinstance(session, dict) else None
-    host = origin if isinstance(origin, str) and origin.strip() else local_name
-    if not isinstance(host, str):
-        host = ""
-    sanitized = re.sub(r"[\x00-\x1f\x7f]", "", host).strip()
-    return sanitized[:32]
+    def _clean(value) -> str:
+        if not isinstance(value, str):
+            return ""
+        return re.sub(r"[\x00-\x1f\x7f]", "", value).strip()[:32]
+
+    # Sanitise BEFORE the blank-check (WR-02): an origin_host made only of
+    # control characters must fall back to local_name, not win the pick and
+    # then sanitise down to an empty host.
+    origin = _clean(session.get("origin_host")) if isinstance(session, dict) else ""
+    return origin or _clean(local_name)
 
 
 def notification_text(label: str, elapsed_sec: int, alias: str = "",
