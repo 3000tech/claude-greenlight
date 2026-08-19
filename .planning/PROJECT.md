@@ -82,9 +82,19 @@ The refactor this project was opened for is **done and live**: Claude Code hooks
 
 Notification semantics ratified with the user during UAT: a popup means "Claude is fully idle" — the toast is held while background tasks run (badge ◉N shows them); the local 🔔/🔕 switch mutes audio only.
 
-## Next Milestone Goals
+## Current Milestone: v1.1 Remote Notifications
 
-Not yet chosen — candidates (see ROADMAP.md Next Milestone): remote devbox + mobile notifications, startup hook-presence check, local host session visibility, V2-02 hookless "no data" UI.
+**Goal:** notifications tell the truth (only when the user is genuinely needed, labeled with the origin host), and devbox sessions are visible on the PC overlay — plus a read-only panel reachable from the phone over the private tailnet.
+
+**Target features:**
+- idle_prompt no longer maps to needs_input (kills illegitimate notifications from self-resuming loop sessions — verified on devbox logs 2026-08-19: 45/45 overnight Notification events were idle_prompt, zero real prompts)
+- Origin hostname in every notification title (toast + Telegram): "Claude ready — nursy @ macbook-devbox"
+- Devbox sessions aggregated into the PC overlay (transport of ~/.claude/monitor-state/*.json — design discussion required; Tailscale available on all devices)
+- No duplicate pushes for remote sessions (single notification owner)
+- Mobile read-only panel via browser over Tailscale (stable names, no external hosting)
+- Devbox headless greenlight updated/restarted or retired
+
+**Key context:** state files already carry `hostname`; all devices are on the same tailnet; the transport + mobile-serving approach is deliberately left to /gsd-discuss-phase.
 
 ---
 *Last updated: 2026-08-19 after v1.0 milestone close*

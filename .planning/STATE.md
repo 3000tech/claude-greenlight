@@ -1,19 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 3
-current_phase_name: flip-to-default-cleanup
-status: milestone_complete
-stopped_at: "v1.0 COMPLETE — 03-UAT live run 11/11 PASS + Teardown done (2026-08-19), verification passed, all 3 phases complete. Next: /gsd-audit-milestone or /gsd-complete-milestone"
-last_updated: "2026-08-19T09:23:42.243Z"
+milestone: v1.1
+milestone_name: Remote Notifications
+status: planning
+last_updated: "2026-08-19T09:58:34.178Z"
 last_activity: 2026-08-19
-last_activity_desc: Phase 3 complete — milestone v1.0 fully verified (UAT 11/11)
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -27,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-28)
 
 ## Current Position
 
-Phase: 3 of 3 — all phases complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Milestone v1.0 complete (live UAT 11/11, verification passed)
-Last activity: 2026-08-19 — Phase 3 complete — milestone v1.0 fully verified
-
-Progress: [██████████] 100%
+Status: Defining requirements
+Last activity: 2026-08-19 — Milestone v1.1 started
 
 ## Performance Metrics
 
