@@ -71,6 +71,15 @@ Progress: [██████████] 100%
 | Phase 03-flip-to-default-cleanup P04 | 9min | 3 tasks | 9 files |
 | Phase quick-260817-i5n P01 | 10min | 3 tasks | 4 files |
 
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-08-19:
+
+| Category | Item | Status |
+|----------|------|--------|
+| todo | startup-check-refuse-to-start-with-clear-error-when-hooks-absent | deferred (candidate next milestone) |
+| todo | local-host-sessions-are-invisible-to-the-monitor | deferred (known limitation, candidate devbox/mobile milestone) |
+
 ## Accumulated Context
 
 ### Decisions

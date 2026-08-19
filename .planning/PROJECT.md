@@ -76,4 +76,15 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-28 after initialization*
+## Current State (v1.0 — shipped 2026-08-19)
+
+The refactor this project was opened for is **done and live**: Claude Code hooks are the primary source of session state (one state file per session on official lifecycle events); jsonl parsing survives only as two live-verified fallbacks (Esc-interrupt recovery ~90s, legacy bridge for sessions without a state file). Shadow mode ran a full week (review GREEN), the flip ran live UAT 11/11 PASS, the retired auq-lock hook is torn down, 313 tests green, merged to main and tagged v1.0.
+
+Notification semantics ratified with the user during UAT: a popup means "Claude is fully idle" — the toast is held while background tasks run (badge ◉N shows them); the local 🔔/🔕 switch mutes audio only.
+
+## Next Milestone Goals
+
+Not yet chosen — candidates (see ROADMAP.md Next Milestone): remote devbox + mobile notifications, startup hook-presence check, local host session visibility, V2-02 hookless "no data" UI.
+
+---
+*Last updated: 2026-08-19 after v1.0 milestone close*
