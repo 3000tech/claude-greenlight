@@ -2861,6 +2861,187 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
         self.assertEqual(records[0]["outcome"], "sent")
 
 
+class Goal30_IdlePingHoldIntegrity(unittest.TestCase):
+    """Plan 04-01 (NOTIF-02, D-02): with the writer's idle_prompt guard in
+    place, an ignored idle ping means the on-disk record — and therefore
+    the session dict _check_transitions sees — never changes. These are
+    monitor-side semantics tests only: no monitor.py change is expected
+    here. If one of these fails, the monitor's behaviour is not what D-02
+    ratified and that is a finding to record in the SUMMARY, not to paper
+    over by editing the gate.
+
+    Reuses Goal27_NotificationGateWiring's Fake app and tick/log helpers
+    verbatim in shape (same frozen-clock setUp, same temp NOTIFICATIONS_LOG
+    repoint) rather than inventing a new double."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.NOTIFICATIONS_LOG
+        monitor.NOTIFICATIONS_LOG = Path(self._tmp.name) / "notifications.log"
+        self._now = [1_700_000_000.0]
+        self._time_patch = mock.patch.object(
+            monitor.time, "time", side_effect=lambda: self._now[0])
+        self._time_patch.start()
+
+    def tearDown(self) -> None:
+        self._time_patch.stop()
+        monitor.NOTIFICATIONS_LOG = self._orig_log
+        self._tmp.cleanup()
+
+    def _advance(self, seconds: float) -> None:
+        self._now[0] += seconds
+
+    def _fake_app(self):
+        class Fake:
+            def __init__(self):
+                self._prev_status = {}
+                self._working_since = {}
+                self._pending_notify = {}
+                self._notify_hold = {}
+                self._session_aliases = {}
+                self.config = {"group_gate": True}
+                self.notifications = []
+
+            def _alias_key(self, key):
+                return key
+
+            def _notify(self, label, elapsed, key=None):
+                self.notifications.append((label, elapsed, key))
+
+            def _dismiss_session_toast(self, key):
+                pass
+
+        return Fake()
+
+    def _tick(self, app, sessions):
+        monitor.MonitorApp._check_transitions(app, sessions)
+
+    def _read_records(self) -> list[dict]:
+        if not monitor.NOTIFICATIONS_LOG.exists():
+            return []
+        return [json.loads(line) for line in
+                monitor.NOTIFICATIONS_LOG.read_text(encoding="utf-8").splitlines()]
+
+    def _session(self, status: str, bg: int = 0, state: str = "waiting") -> dict:
+        # A solo session (unique cwd/hostname -> no group sibling in any of
+        # these ticks) so every assertion here isolates the background_tasks
+        # hold path, never the group_working path Goal27 already covers.
+        return {"key": "34518633", "session_id": "34518633", "name": "yunoai",
+                "cwd": "/workspace/cloudrun-jobs", "hostname": "2340e510e2ef",
+                "status": status, "background_tasks_count": bg, "state": state}
+
+    def _arm(self, app) -> dict:
+        """Common setup: work long enough to arm, then the first WAITING
+        tick that opens the hold on background_tasks. Returns the WAITING
+        session dict used to open it."""
+        self._tick(app, [self._session("WORKING")])
+        app._working_since["34518633"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        waiting = self._session("WAITING", bg=1)
+        self._tick(app, [waiting])   # arm
+        self._tick(app, [waiting])   # gate check -> hold opens, logged
+        return waiting
+
+    def test_hold_survives_repeated_unchanged_idle_ping_ticks(self):
+        """NOTIF-02 regression: post-fix, an ignored idle ping leaves the
+        on-disk record — and so the session dict the monitor sees — byte
+        identical. Feeding the SAME waiting/bg=1 dict on every subsequent
+        tick is exactly that world. Zero notifications, exactly one log
+        record, no matter how many idle pings arrive."""
+        app = self._fake_app()
+        waiting = self._arm(app)
+        for _ in range(5):
+            self._tick(app, [waiting])   # hold persists -> no new log line
+        self.assertEqual(app.notifications, [])
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "suppressed")
+        self.assertEqual(records[0]["reason"], "background_tasks")
+
+    def test_the_pre_fix_leak_a_needs_input_zero_bg_dict_correctly_releases(self):
+        """Pinned as the thing that must never come back, but for the RIGHT
+        reason: the monitor is correct to release the hold on a session
+        dict that genuinely reads needs_input/background_tasks_count=0 —
+        that is today's (and D-02's) intended release condition. What was
+        wrong (NOTIF-02) was the WRITER manufacturing that exact dict out of
+        a harmless idle ping. This test documents that the monitor's
+        behaviour here is correct by design; plan 04-01 fixed it at the
+        writer, not here."""
+        app = self._fake_app()
+        self._arm(app)
+        leaked_dict = self._session("WAITING", bg=0, state="needs_input")
+        self._tick(app, [leaked_dict])
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "sent")
+        self.assertEqual(records[-1]["reason"], "gate_cleared")
+
+    def test_genuine_release_when_background_tasks_count_truly_reaches_zero(self):
+        """D-02, unchanged: a later tick carrying the same session still
+        WAITING (not needs_input) with background_tasks_count 0 releases
+        exactly once, with held_sec recorded."""
+        app = self._fake_app()
+        self._arm(app)
+        self._advance(45)
+        released = self._session("WAITING", bg=0, state="waiting")
+        self._tick(app, [released])
+        self.assertEqual(len(app.notifications), 1)
+        self._tick(app, [released])   # further tick: nothing more
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "sent")
+        self.assertEqual(records[-1]["reason"], "gate_cleared")
+        self.assertIn("held_sec", records[-1])
+        self.assertGreaterEqual(records[-1]["held_sec"], 45)
+
+    def test_self_resume_still_discards_the_hold(self):
+        """D-02, unchanged: the session coming back WORKING on its own
+        discards the held notification — zero sends, one
+        suppressed/session_resumed record."""
+        app = self._fake_app()
+        self._arm(app)
+        self._tick(app, [self._session("WORKING")])
+        self.assertEqual(app.notifications, [])
+        self.assertEqual(app._pending_notify, {})
+        self.assertEqual(app._notify_hold, {})
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "suppressed")
+        self.assertEqual(records[-1]["reason"], "session_resumed")
+
+    def test_max_hold_still_expires_past_the_cap(self):
+        """D-02, unchanged: NOTIFY_GATE_MAX_HOLD_SEC still caps a hold that
+        is never released — dropped, not fired."""
+        app = self._fake_app()
+        waiting = self._arm(app)
+        self._advance(monitor.NOTIFY_GATE_MAX_HOLD_SEC + 5)
+        self._tick(app, [waiting])   # expire
+        self.assertEqual(app.notifications, [])
+        self.assertEqual(app._pending_notify, {})
+        self.assertEqual(app._notify_hold, {})
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "suppressed")
+        self.assertEqual(records[-1]["reason"], "hold_expired")
+
+
+class Goal30b_IdlePingDiskReplay(StateFileTestBase):
+    """End-to-end replay from disk, in Goal25b's style: the real
+    2026-08-17 11:50:24Z session from notifications.log, written as a state
+    file exactly as a post-fix idle ping now leaves it (untouched), read
+    back through scan_state_files() and refused by gate_notification()."""
+
+    def test_20260817_session_stays_refused_on_background_tasks(self):
+        self._write_state("34518633", state="waiting", last_event="Stop",
+                           background_tasks_count=1, hostname="2340e510e2ef",
+                           cwd="/workspace/cloudrun-jobs")
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"34518633": "yunoai"})
+        [session] = sessions
+        self.assertEqual(session["status"], "WAITING")
+        self.assertEqual(session["background_tasks_count"], 1)
+        allowed, reason, _ = monitor.gate_notification(session, sessions)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "background_tasks")
+
+
 class Goal28_LocalSwitchMutesAudioOnly(unittest.TestCase):
     """`local` now gates the audio channel alone (quick-260818-bfm): the
     toast and the taskbar flash always fire regardless of the switch, only
