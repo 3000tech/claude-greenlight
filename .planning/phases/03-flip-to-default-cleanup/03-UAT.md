@@ -1,10 +1,11 @@
 ---
-status: pending
+status: complete
 phase: 03-flip-to-default-cleanup
 plan: 04
 source: [03-01-SUMMARY.md, 03-02-SUMMARY.md, 03-03-SUMMARY.md, 02-DIVERGENCE-REVIEW.md, 03-CONTEXT.md]
 prepared: 2026-08-06
-mode: awaiting-live-run   # authored here (D-12); performed on the Windows machine, not from this execution environment
+updated: 2026-08-19
+mode: live-run-complete   # authored here (D-12); performed live on the Windows machine 2026-08-06 → 2026-08-19: Setup + A–I all PASS, Teardown done (11/11, zero issues)
 ---
 
 # Phase 3 Live Runbook — the flip, on the real machine

@@ -1,7 +1,7 @@
 ---
 phase: 03-flip-to-default-cleanup
-verified: 2026-08-06T00:00:00Z
-status: human_needed
+verified: 2026-08-19T09:30:00Z
+status: passed
 score: 21/21 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
@@ -17,8 +17,8 @@ re_verification:
 # Phase 3: Flip to Default & Cleanup Verification Report
 
 **Phase Goal:** The state-file engine is trusted enough to be the default — legacy jsonl parsing is deleted, tests are rewritten against state files, and the docs describe the architecture that actually ships.
-**Verified:** 2026-08-06
-**Status:** human_needed
+**Verified:** 2026-08-06 (code, 21/21 must-haves); 2026-08-19 (live human UAT complete)
+**Status:** passed — the pending human portion (03-UAT.md live runbook) closed 2026-08-19: Setup + Sections A–I all PASS, H-gated Teardown executed (auq-lock removed, counts 3/10/22/0, monitor-state intact), zero issues, zero gaps
 **Re-verification:** Yes — after gap closure (commits `b94617a` + `b5e69cd`)
 
 ## Re-verification Summary
