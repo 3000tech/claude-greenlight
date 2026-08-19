@@ -1,0 +1,12 @@
+[
+  "SessionStart",
+  "UserPromptSubmit",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "PostToolBatch",
+  "PermissionRequest",
+  "Notification",
+  "Stop",
+  "SubagentStop",
+  "SessionEnd"
+]

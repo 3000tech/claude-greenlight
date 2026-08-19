@@ -20,14 +20,34 @@
 # end-of-turn; the guard + max-age cover a missed Stop (interrupt/crash).
 #
 # Mode: $1 = "set" (UserPromptSubmit | PreToolUse) or "clear" (Stop).
-set -eu
+#
+# Deliberately NOT `set -e` (only `set -u`): this hook must always exit 0,
+# mirroring hooks/state-writer.sh's discipline (see its header comment). A
+# bare `mkdir`/`touch`/`rm -f` failure on a flaky 9p mount must never
+# propagate a non-zero exit back to Claude Code from a
+# PreToolUse/UserPromptSubmit/Stop hook, so every fallible filesystem
+# command below is explicitly guarded with `|| true`.
+set -u
 mode="${1:-}"
 sid=$(cat | jq -r '.session_id // empty' 2>/dev/null || true)
 [ -z "$sid" ] && exit 0
+
+# Path-traversal guard (T-03-01): sid becomes part of a filesystem path
+# below. Reject anything that isn't a bare filename-safe token before it is
+# used, mirroring hooks/state-writer.sh's identical guard byte-for-byte so
+# the two scripts cannot drift. A rejected payload exits 0 silently — same
+# as every other early-exit path here and in state-writer.sh; a hook must
+# never fail loudly and disrupt the session.
+case "$sid" in
+  *[!A-Za-z0-9._-]*)
+    exit 0
+    ;;
+esac
+
 lock_dir="$HOME/.claude/working-locks"
-mkdir -p "$lock_dir"
+mkdir -p "$lock_dir" 2>/dev/null || true
 case "$mode" in
-  set)   touch "$lock_dir/$sid" ;;
-  clear) rm -f "$lock_dir/$sid" ;;
+  set)   touch "$lock_dir/$sid" 2>/dev/null || true ;;
+  clear) rm -f "$lock_dir/$sid" 2>/dev/null || true ;;
 esac
 exit 0
