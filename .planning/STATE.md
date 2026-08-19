@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 3
 current_phase_name: flip-to-default-cleanup
-status: verifying
-stopped_at: "Phase 3 executed: 4/4 plans + review-fix cycle, 21/21 must-haves verified, 236 tests green. Awaiting live UAT on the Windows machine (03-UAT.md)"
-last_updated: "2026-08-18T08:27:31.922Z"
-last_activity: 2026-08-18
-last_activity_desc: "Completed quick task 260818-ejg: installer no longer attaches event-logger to worktree delegation hooks"
+status: milestone_complete
+stopped_at: "v1.0 COMPLETE — 03-UAT live run 11/11 PASS + Teardown done (2026-08-19), verification passed, all 3 phases complete. Next: /gsd-audit-milestone or /gsd-complete-milestone"
+last_updated: "2026-08-19T09:23:42.243Z"
+last_activity: 2026-08-19
+last_activity_desc: Phase 3 complete — milestone v1.0 fully verified (UAT 11/11)
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 11
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -23,22 +23,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-28)
 
 **Core value:** Keep telling the user "this session needs you now" reliably — stop breaking every time Claude Code changes its internal jsonl format; hook-derived state is correct by construction instead of guessed.
-**Current focus:** Phase 3 — flip-to-default-cleanup
+**Current focus:** milestone v1.0 complete — next: milestone audit/close
 
 ## Current Position
 
-Phase: 3 (flip-to-default-cleanup) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
-Last activity: 2026-08-18 — Completed quick task 260818-ejg: installer no longer attaches event-logger to worktree delegation hooks
+Phase: 3 of 3 — all phases complete
+Plan: —
+Status: Milestone v1.0 complete (live UAT 11/11, verification passed)
+Last activity: 2026-08-19 — Phase 3 complete — milestone v1.0 fully verified
 
-Progress: [█████████░] 91%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 2
+- Total plans completed: 6
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -47,6 +47,7 @@ Progress: [█████████░] 91%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 2 | - | - |
+| 3 | 4 | - | - |
 
 **Recent Trend:**
 
@@ -155,6 +156,7 @@ Recent decisions affecting current work:
 | 260818-c9o | Saved window position on a secondary screen survives restart — off-screen check now uses the virtual-screen rect | 2026-08-18 | c953cee | [260818-c9o-saved-window-position-on-secondary-scree](./quick/260818-c9o-saved-window-position-on-secondary-scree/) |
 | 260818-ejg | Installer no longer attaches event-logger to WorktreeCreate/WorktreeRemove (delegation hooks); guard + prune for existing installs | 2026-08-18 | 4329624 | [260818-ejg-installer-must-not-attach-event-logger-t](./quick/260818-ejg-installer-must-not-attach-event-logger-t/) |
 | 11 | x | 2026-08-18 | 14a6b7a | — |
+| 15 | Window title renamed to Claude Greenlight | 2026-08-18 | 839f15d | — |
 
 ## Deferred Items
 
@@ -166,6 +168,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-17T13:25:01.251Z
-Stopped at: 03-UAT live run 4/11 recorded PASS (Setup, A, B, C) — paused mid-UAT, resume at Section D on this machine (quick task 260817-i5n completed in between, no impact on UAT scope)
+Last session: 2026-08-19
+Stopped at: 03-UAT live run 9/11 recorded PASS (Setup, A, B, C, E, F, G, H, I) — restano Section D (bridge hookless) e Teardown (gate H superato, quindi sbloccato); poi /gsd-verify-work 3
 Resume file: .planning/phases/03-flip-to-default-cleanup/.continue-here.md
