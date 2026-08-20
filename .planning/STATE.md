@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Remote Notifications
-status: verifying
-last_updated: "2026-08-19T09:58:34.178Z"
-last_activity: 2026-08-19
+status: executing
+last_updated: "2026-08-20T09:35:00.000Z"
+last_activity: 2026-08-20
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 3
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 33
 ---
 
 # Project State
@@ -20,14 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-28)
 
 **Core value:** Keep telling the user "this session needs you now" reliably — stop breaking every time Claude Code changes its internal jsonl format; hook-derived state is correct by construction instead of guessed.
-**Current focus:** milestone v1.0 complete — next: milestone audit/close
+**Current focus:** milestone v1.1 Remote Notifications — Phase 4 (notification truth) COMPLETE and verified live; next: Phase 5 planning (devbox sessions on the PC overlay)
 
 ## Current Position
 
-Phase: 4 of 6 (notification-truth) — code-complete
+Phase: 4 of 6 (notification-truth) — **COMPLETE 2026-08-20**
 Plan: 2 of 2 complete
-Status: Awaiting live UAT (04-UAT.md — overnight Section F is the blocking gate)
-Last activity: 2026-08-19 — Phase 4 executed: 2/2 plans, review fixed (WR-02), verifier 10/10 human_needed
+Status: Verified — 04-VERIFICATION.md `passed` (4/4 success criteria), 04-UAT.md `complete` (8/8 passed). SC-4's overnight live gate closed on the night of 2026-08-19/20: 28 idle pings on the devbox loop session produced 0 notifications and 0 state writes, `gate_cleared` held at its pre-night baseline on both machines (devbox 24, PC 10), and all 3 notifications that did fire were adjudicated true positives. The ~20 illegitimate overnight pushes of 2026-08-18/19 are gone.
+Next: Phase 5 — `/gsd-plan-phase 5` (05-CONTEXT.md and 05-RESEARCH.md already on disk, no plans written)
+Last activity: 2026-08-20 — Section F recorded, phase closed
 
 ## Performance Metrics
 
@@ -124,6 +125,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [quick-260817-i5n]: event-logger.sh samples background_tasks descriptor shape (name allowlist + value-shape guard, capped at 5 entries) — deployed live; real samples show type field discriminates shell vs subagent, recorded as TEST-MATRIX case #17 rev.3 with no verdict change
 - [Phase ?]: [quick-260817-i5n]: scripts/bg-task-shape-report.sh aggregates sampled descriptor shapes/values and joins descriptor ids against known agent_id — used to gather rev.3 evidence, no state-writer.sh change shipped
 
+- [Phase 04]: Section F recorded as PASS **with a note** rather than a bare PASS: the section's literal wording expected `sent` == 0 for the overnight loop session and the measured value was 2, both true positives (one answered by the user 18s after the push, one a genuine full stop). The criterion the phase actually owns — notifications traceable to an `idle_prompt` — measured 0 out of 28 opportunities. Recorded explicitly so the non-zero number is never later mistaken for a tolerated defect.
+- [Phase 04]: Section F's second half (a real permission prompt still pages) was NOT exercised overnight — no permission prompt occurred on the devbox in the window. Not re-run: Sections B and C exercised that path live the same day and passed.
+
 ### Pending Todos
 
 - [major/general] Preserve today's fixes (2026-07-30) across the Phase 3 flip — alias container-key (Goal6d da riscrivere su fixture state-file, non droppare), multi-monitor fix, soglia 60s deliberata
@@ -172,6 +176,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-19
-Stopped at: 03-UAT live run 9/11 recorded PASS (Setup, A, B, C, E, F, G, H, I) — restano Section D (bridge hookless) e Teardown (gate H superato, quindi sbloccato); poi /gsd-verify-work 3
-Resume file: .planning/phases/03-flip-to-default-cleanup/.continue-here.md
+Last session: 2026-08-20
+Stopped at: Phase 4 closed — Section F (overnight acceptance) recorded PASS-with-note, 04-UAT.md complete, 04-VERIFICATION.md passed, ROADMAP Phase 4 checked off. Ready for Phase 5 planning.
+Resume file: none — Phase 4's checkpoint and HANDOFF.json are retired

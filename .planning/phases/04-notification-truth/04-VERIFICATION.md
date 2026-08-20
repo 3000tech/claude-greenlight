@@ -1,10 +1,12 @@
 ---
 phase: 04-notification-truth
 verified: 2026-08-19T00:00:00Z
-status: human_needed
-score: 10/10 must-haves verified (code-level); 1 live acceptance item open
+status: passed
+score: 10/10 must-haves verified (code-level); the live acceptance item (SC-4) closed 2026-08-20
+closed: 2026-08-20T09:30:00Z
 behavior_unverified: 0
 overrides_applied: 0
+human_verification_completed: 2026-08-20 — 04-UAT.md executed live on both machines; frontmatter now reads `status: complete`, Summary 8/8 passed. Section F verdict: 28 idle_prompt events on the devbox loop session produced 0 sends and 0 state writes; `gate_cleared` 0 against a pre-night baseline of 24; needs_input/gate_cleared totals unchanged on both machines (devbox 40/24, PC 27/10). The 3 sends in the window were adjudicated individually and are all true positives. See the note below on the section's literal wording.
 human_verification:
   - test: "Run .planning/phases/04-notification-truth/04-UAT.md live on the real Windows PC + devbox (Setup, Sections A-F), including the overnight loop-session acceptance (Section F)."
     expected: "Sections A-E confirm the code's behaviour on real Claude Code sessions (idle ping inert, real permission_prompt/AskUserQuestion still page, hold survives an idle ping, host shown on both channels and in the log). Section F — the phase's fourth, BLOCKING success criterion — needs a full overnight run producing a sent-notification count of 0 and an idle-ping count > 0 for the loop session, while a real permission prompt in the same window still paged."
@@ -14,8 +16,8 @@ human_verification:
 # Phase 4: Notification Truth Verification Report
 
 **Phase Goal:** A notification means what it claims — the user is genuinely needed — and it says which machine is asking. Self-resuming loop sessions stop paging overnight, the background-tasks hold stops leaking, and origin host is visible on every channel.
-**Verified:** 2026-08-19
-**Status:** human_needed
+**Verified:** 2026-08-19 (code) / 2026-08-20 (live acceptance)
+**Status:** passed
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
@@ -27,9 +29,9 @@ human_verification:
 | SC-1 | Session that receives only `idle_prompt` Notifications stays `waiting`, zero pushes; a real `permission_prompt`/AskUserQuestion still turns `needs_input` and pages | ✓ VERIFIED | `hooks/state-writer.sh` Notification branch (lines 185-206): exits 0 without writing only when `notification_type` is exactly `idle_prompt`; `PermissionRequest` untouched (line 182-184). `test_state_writer.py::Goal10_IdlePingNeverPages` (5 tests) replays the real 2026-08-17 episode end to end (writer → state file → `scan_state_files()` → `gate_notification()`) and pins the fail-safe direction (permission_prompt, absent/empty/unrecognised/non-string type, bare PermissionRequest all still write `needs_input`). Ran locally: all 5 tests PASS. |
 | SC-2 | A notification held by the background-tasks gate is released only when the session genuinely needs the user or is fully idle; an idle ping mid-hold leaves the hold standing (no `gate_cleared` send) | ✓ VERIFIED | Because an ignored idle ping never rewrites the state file, `gate_notification()`'s existing `background_tasks` refusal (monitor.py) never sees a fabricated `background_tasks_count: 0`. `test_monitor.py::Goal30_IdlePingHoldIntegrity` (5 tests) + `Goal30b_IdlePingDiskReplay` (1 test) pin: hold survives repeated unchanged ticks (zero `_notify` calls, one log record), genuine release still fires, self-resume still discards, max-hold still expires, and a disk replay of the real 2026-08-17 session confirms the refusal. Ran locally: all 6 tests PASS. Zero `monitor.py` changes were needed for this truth — confirmed as a writer-only fix. |
 | SC-3 | Every notification title carries its origin host on both toast and Telegram, for local sessions as well as remote ones; `notifications.log` records the identical string | ✓ VERIFIED | `monitor.py`: `local_machine_name()` (1451-1476), `notification_host()` (1479-1501, includes the WR-02 fix — sanitises before the blank-check), `notification_text(label, elapsed, alias, host)` (1504-1527) appends ` @ {host}`, single build site. `_notify()` (2635-2674) builds the title once and passes the identical `toast_title`/`toast_body` to both `_send_telegram()` and `_notify_toast()`. `_check_transitions` (2300-2412) resolves `host` per session at all six `notification_record` call sites (plain send, hold-opens, reason-changed, hold_expired, session_resumed, session_gone-via-snapshot). `test_monitor.py::Goal31_NotificationHostLabel` (20 tests) covers both-channels parity, single-build-site proof (stubbed `notification_text` reaches both `_notify` and the log), log parity for sent AND all three suppressed shapes, the resolver precedence (config → COMPUTERNAME → gethostname, never HOSTNAME), and `machine_name`'s `DEFAULT_CONFIG`/`load_config` round trip. Ran locally: all 20 tests PASS. Manually re-verified the WR-02 fix by direct call: a control-char-only `origin_host` (`"\x01\x02"`) correctly falls back to `local_name` rather than degrading to an empty host. |
-| SC-4 | On the real Windows + devbox setup, a full overnight run produces zero illegitimate notifications while real permission prompts still page immediately (live, user-assisted UAT) | ? NOT YET RUN | `.planning/phases/04-notification-truth/04-UAT.md` exists, is structurally complete (Setup for PC + devbox, Sections A-F, Recording table, Tests placeholders), and explicitly carries WR-01's fix operationally (Setup step 4 pins `machine_name` in the devbox config to avoid the container-id fallback). Frontmatter reads `status: pending`; the Summary table reads `total: 8, passed: 0, pending: 8`. No section has been executed yet — this is a live, human-run item by design and cannot be verified from the codebase. |
+| SC-4 | On the real Windows + devbox setup, a full overnight run produces zero illegitimate notifications while real permission prompts still page immediately (live, user-assisted UAT) | ✓ VERIFIED (live, 2026-08-20) | `04-UAT.md` executed end to end on both machines; frontmatter `status: complete`, Summary 8/8 passed. Section F, night of 2026-08-19/20: the devbox loop session `08b9a56d` ran continuously (8 Stop / 8 UserPromptSubmit pairs, monitor alive) and produced **28 `idle_prompt` events → 0 sends, 0 state writes**; 17 background-tasks hold cycles opened and closed on self-resume with **`gate_cleared` = 0** against a pre-night baseline of 24 — the exact path that leaked ~20 illegitimate pushes on 2026-08-18/19. needs_input/gate_cleared totals unchanged on both machines (devbox 40 → 40 / 24 → 24; PC 27 → 27 / 10 → 10). Three `sent` records in the window, each adjudicated against `hook-events.log`: a different session's clean turn end, a genuine 16-minute wait the user answered 18 seconds after the push, and the loop stopping for real at 23:03Z with `background_tasks_count` 0 (still stopped at check time). ZERO sends traceable to an `idle_prompt`. Recorded as PASS with a note: the section's literal wording expected `sent` == 0 for the loop session and the measured value is 2, both true positives — see 04-UAT.md Section F. The section's second half (a real permission prompt still pages) was not exercised — none occurred overnight; Sections B and C covered that path live on 2026-08-19 |
 
-**Score:** 3/4 ROADMAP success criteria code-verified with passing automated tests (SC-1, SC-2, SC-3); SC-4 is the phase's designed live-verification gate, not yet run.
+**Score:** 4/4 ROADMAP success criteria met — SC-1, SC-2, SC-3 code-verified with passing automated tests (2026-08-19); SC-4 closed live on the real hardware pair (2026-08-20), the phase's designed overnight gate.
 
 ### Plan-Level Must-Haves (04-01-PLAN.md)
 
@@ -109,7 +111,7 @@ No orphaned requirements — all three NOTIF-* requirements are claimed by exact
 
 None. No TBD/FIXME/XXX/TODO/HACK/PLACEHOLDER markers in any phase-modified file. No stub returns, no hardcoded empty data flowing to rendered output.
 
-## Human Verification Required
+## Human Verification — COMPLETED 2026-08-20
 
 ### 1. Run 04-UAT.md live (Setup + Sections A-F, including the BLOCKING Section F overnight acceptance)
 
@@ -117,17 +119,24 @@ None. No TBD/FIXME/XXX/TODO/HACK/PLACEHOLDER markers in any phase-modified file.
 
 **Expected:** Sections A-E each confirm one piece of the phase's code-level guarantee against a real session (idle ping inert, real prompts still page, hold survives an idle ping, host shown identically on toast/Telegram/log). Section F — the phase's fourth ROADMAP success criterion — must show a `sent` count of 0 and an `idle_prompt` count > 0 for the overnight loop session, with a real permission prompt elsewhere in the same window still producing a `sent` count > 0.
 
-**Why human:** This is explicitly a live, overnight, user-assisted verification against real Claude Code sessions and real notification delivery (toast + Telegram) on the actual hardware pair — the exact kind of check the ROADMAP itself designates as "live UAT" and that no unit test, grep, or static check can substitute for. The runbook's own frontmatter (`status: pending`) and Summary (`passed: 0, pending: 8`) confirm it has not yet been run.
+**Why human:** This is explicitly a live, overnight, user-assisted verification against real Claude Code sessions and real notification delivery (toast + Telegram) on the actual hardware pair — the exact kind of check the ROADMAP itself designates as "live UAT" and that no unit test, grep, or static check can substitute for.
+
+**Result: DONE — 8/8 passed.** Setup and Sections A-E recorded live on 2026-08-19 (CC 2.1.234 on the PC, devbox over Tailscale); Section F recorded 2026-08-20 from the night of 2026-08-19/20. Runbook frontmatter now reads `status: complete`, Summary `passed: 8, pending: 0`.
+
+Two deviations from the runbook's literal wording, both recorded rather than papered over:
+
+1. **Section F expected `sent` == 0 for the loop session; the measured value is 2.** Both are true positives — one was answered by the user 18 seconds after the push, the other was the loop stopping for real (`Stop` with `background_tasks_count` 0, still stopped hours later at check time). The wording assumed the loop would never genuinely stop. The number the phase actually owns — notifications traceable to an `idle_prompt` — is **0 out of 28 opportunities**.
+2. **Section F's second half (a real permission prompt still pages) was not exercised**: no `permission_prompt` / `PermissionRequest` event occurred on the devbox overnight, so there was nothing to observe. Sections B and C exercised that path live earlier the same day and both passed, and the legitimate 23:03Z send proves the send path was alive during the window.
 
 ## Gaps Summary
 
 No code-level gaps. Both plans' must-haves (truths, artifacts, key links) are all VERIFIED against the actual codebase, not just claimed in the SUMMARYs — every test file, class, and test named in both SUMMARYs was independently located and re-run locally (bare `OK`, 303 tests), and the two code-review Warnings were independently checked: WR-02 is fixed in code (re-verified by direct function call) and WR-01 is addressed operationally in the UAT runbook, exactly as 04-REVIEW.md's option (a) permits.
 
-The only open item is the phase's own fourth success criterion (SC-4): a live, human-run overnight acceptance test on the real Windows PC + devbox pair, authored and ready in `04-UAT.md` but not yet executed. This is a designed gate, not a defect — plan 04-02 explicitly scoped the live run outside its own execution ("criterion 4 carried by 04-UAT.md and closed by the live overnight run, not by this execution"). Per the verification decision tree, an unexecuted-but-ready human-verification item routes the overall status to `human_needed`, not `gaps_found`.
+**CLOSED 2026-08-20.** The one open item was the phase's own fourth success criterion (SC-4): a live, human-run overnight acceptance test on the real Windows PC + devbox pair. It ran on the night of 2026-08-19/20 and passed — 28 idle pings on the devbox loop session produced zero notifications and zero state writes, `gate_cleared` stayed at its pre-night baseline of 24 on the devbox and 10 on the PC, and every notification that did reach the user was independently confirmed to be one the user genuinely needed. Status moves from `human_needed` to `passed`; no gaps remain at any level.
 
 Note (non-blocking, informational): `.planning/STATE.md` and `.planning/ROADMAP.md`'s Phase 4 checkboxes/progress table were not observed to reflect the phase's completed plans (STATE.md still reads milestone status `planning`, ROADMAP's Phase 4 progress row still reads `0/2`) — this is a project-bookkeeping staleness issue, not a code or goal-achievement gap, and does not affect this verification's findings.
 
 ---
 
-_Verified: 2026-08-19_
-_Verifier: Claude (gsd-verifier)_
+_Verified: 2026-08-19 (code-level) — SC-4 closed live 2026-08-20_
+_Verifier: Claude (gsd-verifier); live acceptance adjudicated from `hook-events.log` + `notifications.log` on both machines_
