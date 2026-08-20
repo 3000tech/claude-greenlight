@@ -11,11 +11,11 @@
   "perplexity": false,
   "jina": false,
   "git": {
-    "branching_strategy": "none",
+    "branching_strategy": "phase",
     "create_tag": true,
-    "phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "phase_branch_template": "feat/phase-{phase}-{slug}",
     "milestone_branch_template": "gsd/{milestone}-{slug}",
-    "quick_branch_template": null
+    "quick_branch_template": "feat/quick-{slug}"
   },
   "workflow": {
     "research": true,

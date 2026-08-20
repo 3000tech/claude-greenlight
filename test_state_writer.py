@@ -1117,5 +1117,143 @@ class Goal9_AuqLockRetired(_HomeTestCase):
             self.assertIn(mode, result.stderr)
 
 
+# ---------------------------------------------------------------------------
+# GOAL 10 — An idle_prompt Notification is an outright ignore, end to end
+# (NOTIF-01/NOTIF-02, D-01/D-02, plan 04-01): the hook script never writes,
+# so the shadow engine's verdict and the notification gate never see it.
+# ---------------------------------------------------------------------------
+
+class Goal10_IdlePingNeverPages(_HomeTestCase):
+    def test_idle_ping_leaves_state_byte_identical_and_gate_still_refuses(self):
+        """Replays the real 2026-08-17 13:05:44Z / 13:06:49Z episode
+        (docs/TEST-MATRIX.md section 4 rev.3): a Stop with one in-flight
+        background shell opens a hold-worthy waiting record, then a real
+        idle_prompt Notification — the live payload's exact key set, no
+        background_tasks key at all — must not touch it. The whole lie's
+        route, end to end: hook script -> state file -> scan_state_files ->
+        gate_notification."""
+        sid = "34518633"
+
+        # 1. Stop with one in-flight background shell: waiting,
+        # background_tasks_count 1.
+        bg_tasks = [{"type": "shell", "status": "running"}]
+        result = _run_state_writer(
+            _payload(event="Stop", session_id=sid, background_tasks=bg_tasks),
+            self.home,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state_file = _state_dir(self.home) / f"{sid}.json"
+        obj = json.loads(state_file.read_text(encoding="utf-8"))
+        self.assertEqual(obj["state"], "waiting")
+        self.assertEqual(obj["background_tasks_count"], 1)
+        before_bytes = state_file.read_bytes()
+        before_mtime = state_file.stat().st_mtime_ns
+
+        # 2. A real idle_prompt Notification — the live sample's exact key
+        # set, deliberately NO background_tasks key.
+        idle_payload = json.dumps({
+            "cwd": "/workspace",
+            "hook_event_name": "Notification",
+            "message": "Claude is waiting for your input",
+            "notification_type": "idle_prompt",
+            "prompt_id": "prompt-idle-1",
+            "session_id": sid,
+            "transcript_path": "/workspace/.claude/projects/x/34518633.jsonl",
+        })
+        result2 = _run_state_writer(idle_payload, self.home)
+        self.assertEqual(result2.returncode, 0, result2.stderr)
+        self.assertEqual(result2.stdout, "")
+
+        after_bytes = state_file.read_bytes()
+        after_mtime = state_file.stat().st_mtime_ns
+        self.assertEqual(before_bytes, after_bytes)
+        self.assertEqual(before_mtime, after_mtime)
+
+        # 3. scan_state_files -> gate_notification: still WAITING, still
+        # background_tasks_count 1, still refused.
+        orig_state_dir = monitor.STATE_DIR
+        monitor.STATE_DIR = _state_dir(self.home)
+        try:
+            rendered = monitor.scan_state_files(
+                sessionid_to_label={sid: "yunoai"}, legacy_sessions=[]
+            )
+        finally:
+            monitor.STATE_DIR = orig_state_dir
+
+        self.assertEqual(len(rendered), 1)
+        session = rendered[0]
+        self.assertEqual(session["status"], "WAITING")
+        self.assertEqual(session["background_tasks_count"], 1)
+        allowed, reason, _detail = monitor.gate_notification(session, [session])
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "background_tasks")
+
+    def test_permission_prompt_notification_still_writes_needs_input(self):
+        sid = "perm-prompt-live-shape"
+        payload = json.dumps({
+            "cwd": "/workspace",
+            "hook_event_name": "Notification",
+            "message": "Claude needs your permission to use Bash",
+            "notification_type": "permission_prompt",
+            "prompt_id": "prompt-perm-1",
+            "session_id": sid,
+            "transcript_path": "/workspace/.claude/projects/x/perm.jsonl",
+        })
+        result = _run_state_writer(payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = json.loads((_state_dir(self.home) / f"{sid}.json").read_text(encoding="utf-8"))
+        self.assertEqual(obj["state"], "needs_input")
+        self.assertEqual(obj["last_event"], "Notification")
+
+    def test_notification_with_missing_empty_unknown_or_nonstring_type_still_pages(self):
+        """Fail-safe direction (D-01): only the exact literal `idle_prompt`
+        is ignored — everything else, including a payload shape that has
+        never been seen live, still pages."""
+        cases = {
+            "missing": {},
+            "empty_string": {"notification_type": ""},
+            "unrecognised": {"notification_type": "some_future_type"},
+            "number": {"notification_type": 123},
+            "object": {"notification_type": {"nested": True}},
+        }
+        for name, extra in cases.items():
+            with self.subTest(case=name):
+                sid = f"notif-failsafe-{name}"
+                result = _run_state_writer(
+                    _payload(event="Notification", session_id=sid, **extra), self.home
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = json.loads((_state_dir(self.home) / f"{sid}.json").read_text(encoding="utf-8"))
+                self.assertEqual(obj["state"], "needs_input")
+
+    def test_permission_request_writes_needs_input_unconditionally(self):
+        """The AskUserQuestion path (TEST-MATRIX case 6): PermissionRequest
+        never involves notification_type at all."""
+        sid = "perm-request-unconditional"
+        result = _run_state_writer(
+            _payload(event="PermissionRequest", session_id=sid), self.home
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obj = json.loads((_state_dir(self.home) / f"{sid}.json").read_text(encoding="utf-8"))
+        self.assertEqual(obj["state"], "needs_input")
+        self.assertEqual(obj["last_event"], "PermissionRequest")
+
+    def test_idle_ping_for_session_with_no_existing_state_file_writes_nothing(self):
+        sid = "never-seen-before"
+        idle_payload = json.dumps({
+            "cwd": "/workspace",
+            "hook_event_name": "Notification",
+            "message": "Claude is waiting for your input",
+            "notification_type": "idle_prompt",
+            "prompt_id": "prompt-idle-2",
+            "session_id": sid,
+            "transcript_path": "/workspace/.claude/projects/x/never.jsonl",
+        })
+        result = _run_state_writer(idle_payload, self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse((_state_dir(self.home) / f"{sid}.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,14 @@
 #   UserPromptSubmit                         -> working
 #   PostToolUse / PostToolUseFailure /
 #     PostToolBatch (heartbeats)             -> working
-#   PermissionRequest / Notification         -> needs_input
+#   PermissionRequest                        -> needs_input, unconditionally
+#   Notification                             -> needs_input, EXCEPT
+#     notification_type == "idle_prompt" (D-01, 2026-08-19 devbox evidence:
+#     45/45 overnight Notification events were idle_prompt, ~20 false pushes
+#     to a self-resuming loop session) -> no write at all. Fail-safe
+#     direction: an absent, empty, unrecognised or non-string
+#     notification_type still writes needs_input — only the exact literal
+#     idle_prompt is ignored.
 #   SessionStart (source != compact)         -> idle
 #   SessionStart (source == compact)         -> no write (case 11 — a
 #     mid-session /compact re-fires SessionStart on the SAME session_id;
@@ -172,7 +179,29 @@ case "$event" in
   PostToolUse|PostToolUseFailure|PostToolBatch)
     state="working"
     ;;
-  PermissionRequest|Notification)
+  PermissionRequest)
+    state="needs_input"
+    ;;
+  Notification)
+    # D-01: idle_prompt ("Claude has been idle 60s") is ignored outright —
+    # no state, no timestamp refresh, no liveness heartbeat, no separate
+    # marker file. Fail-safe direction points the OTHER way from every other
+    # guard in this file: an unknown or missing notification_type still
+    # pages (state="needs_input" below), because over-notifying is
+    # recoverable and silence is not — the same reasoning
+    # gate_notification() and the bg_agents_only resolver above already
+    # document. Only the exact literal "idle_prompt" is ignored.
+    #
+    # This is also the D-02 link: a real idle_prompt payload carries no
+    # `background_tasks` key at all (confirmed from the live payload key
+    # set), so skipping the write here is what leaves a held
+    # notification-gate hold's evidence (the last real waiting record, with
+    # its background_tasks_count) untouched — closing the gate_cleared leak
+    # (10 records in this machine's own notifications.log before this fix).
+    notification_type=$(jq -r '.notification_type // empty' <<<"$payload" 2>/dev/null)
+    if [ "$notification_type" = "idle_prompt" ]; then
+      exit 0
+    fi
     state="needs_input"
     ;;
   SessionStart)

@@ -1100,8 +1100,8 @@ class Goal8_NotificationDebounce(unittest.TestCase):
             def _alias_key(self, key):
                 return key
 
-            def _notify(self, label, elapsed, key=None):
-                self.notifications.append((label, elapsed, key))
+            def _notify(self, label, elapsed, key=None, host=""):
+                self.notifications.append((label, elapsed, key, host))
 
             def _dismiss_session_toast(self, key):
                 pass
@@ -1136,7 +1136,7 @@ class Goal8_NotificationDebounce(unittest.TestCase):
         self.assertEqual(app.notifications, [])
         self._tick(app, "WAITING")
         self.assertEqual(len(app.notifications), 1)
-        label, elapsed, key = app.notifications[0]
+        label, elapsed, key, _host = app.notifications[0]
         self.assertEqual(label, "nursy")
         self.assertEqual(key, "k1")
         self.assertGreaterEqual(elapsed, monitor.NOTIFY_MIN_WORK_SEC)
@@ -2644,8 +2644,8 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
             def _alias_key(self, key):
                 return key
 
-            def _notify(self, label, elapsed, key=None):
-                self.notifications.append((label, elapsed, key))
+            def _notify(self, label, elapsed, key=None, host=""):
+                self.notifications.append((label, elapsed, key, host))
 
             def _dismiss_session_toast(self, key):
                 pass
@@ -2859,6 +2859,187 @@ class Goal27_NotificationGateWiring(unittest.TestCase):
         records = self._read_records()
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["outcome"], "sent")
+
+
+class Goal30_IdlePingHoldIntegrity(unittest.TestCase):
+    """Plan 04-01 (NOTIF-02, D-02): with the writer's idle_prompt guard in
+    place, an ignored idle ping means the on-disk record — and therefore
+    the session dict _check_transitions sees — never changes. These are
+    monitor-side semantics tests only: no monitor.py change is expected
+    here. If one of these fails, the monitor's behaviour is not what D-02
+    ratified and that is a finding to record in the SUMMARY, not to paper
+    over by editing the gate.
+
+    Reuses Goal27_NotificationGateWiring's Fake app and tick/log helpers
+    verbatim in shape (same frozen-clock setUp, same temp NOTIFICATIONS_LOG
+    repoint) rather than inventing a new double."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.NOTIFICATIONS_LOG
+        monitor.NOTIFICATIONS_LOG = Path(self._tmp.name) / "notifications.log"
+        self._now = [1_700_000_000.0]
+        self._time_patch = mock.patch.object(
+            monitor.time, "time", side_effect=lambda: self._now[0])
+        self._time_patch.start()
+
+    def tearDown(self) -> None:
+        self._time_patch.stop()
+        monitor.NOTIFICATIONS_LOG = self._orig_log
+        self._tmp.cleanup()
+
+    def _advance(self, seconds: float) -> None:
+        self._now[0] += seconds
+
+    def _fake_app(self):
+        class Fake:
+            def __init__(self):
+                self._prev_status = {}
+                self._working_since = {}
+                self._pending_notify = {}
+                self._notify_hold = {}
+                self._session_aliases = {}
+                self.config = {"group_gate": True}
+                self.notifications = []
+
+            def _alias_key(self, key):
+                return key
+
+            def _notify(self, label, elapsed, key=None, host=""):
+                self.notifications.append((label, elapsed, key, host))
+
+            def _dismiss_session_toast(self, key):
+                pass
+
+        return Fake()
+
+    def _tick(self, app, sessions):
+        monitor.MonitorApp._check_transitions(app, sessions)
+
+    def _read_records(self) -> list[dict]:
+        if not monitor.NOTIFICATIONS_LOG.exists():
+            return []
+        return [json.loads(line) for line in
+                monitor.NOTIFICATIONS_LOG.read_text(encoding="utf-8").splitlines()]
+
+    def _session(self, status: str, bg: int = 0, state: str = "waiting") -> dict:
+        # A solo session (unique cwd/hostname -> no group sibling in any of
+        # these ticks) so every assertion here isolates the background_tasks
+        # hold path, never the group_working path Goal27 already covers.
+        return {"key": "34518633", "session_id": "34518633", "name": "yunoai",
+                "cwd": "/workspace/cloudrun-jobs", "hostname": "2340e510e2ef",
+                "status": status, "background_tasks_count": bg, "state": state}
+
+    def _arm(self, app) -> dict:
+        """Common setup: work long enough to arm, then the first WAITING
+        tick that opens the hold on background_tasks. Returns the WAITING
+        session dict used to open it."""
+        self._tick(app, [self._session("WORKING")])
+        app._working_since["34518633"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        waiting = self._session("WAITING", bg=1)
+        self._tick(app, [waiting])   # arm
+        self._tick(app, [waiting])   # gate check -> hold opens, logged
+        return waiting
+
+    def test_hold_survives_repeated_unchanged_idle_ping_ticks(self):
+        """NOTIF-02 regression: post-fix, an ignored idle ping leaves the
+        on-disk record — and so the session dict the monitor sees — byte
+        identical. Feeding the SAME waiting/bg=1 dict on every subsequent
+        tick is exactly that world. Zero notifications, exactly one log
+        record, no matter how many idle pings arrive."""
+        app = self._fake_app()
+        waiting = self._arm(app)
+        for _ in range(5):
+            self._tick(app, [waiting])   # hold persists -> no new log line
+        self.assertEqual(app.notifications, [])
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "suppressed")
+        self.assertEqual(records[0]["reason"], "background_tasks")
+
+    def test_the_pre_fix_leak_a_needs_input_zero_bg_dict_correctly_releases(self):
+        """Pinned as the thing that must never come back, but for the RIGHT
+        reason: the monitor is correct to release the hold on a session
+        dict that genuinely reads needs_input/background_tasks_count=0 —
+        that is today's (and D-02's) intended release condition. What was
+        wrong (NOTIF-02) was the WRITER manufacturing that exact dict out of
+        a harmless idle ping. This test documents that the monitor's
+        behaviour here is correct by design; plan 04-01 fixed it at the
+        writer, not here."""
+        app = self._fake_app()
+        self._arm(app)
+        leaked_dict = self._session("WAITING", bg=0, state="needs_input")
+        self._tick(app, [leaked_dict])
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "sent")
+        self.assertEqual(records[-1]["reason"], "gate_cleared")
+
+    def test_genuine_release_when_background_tasks_count_truly_reaches_zero(self):
+        """D-02, unchanged: a later tick carrying the same session still
+        WAITING (not needs_input) with background_tasks_count 0 releases
+        exactly once, with held_sec recorded."""
+        app = self._fake_app()
+        self._arm(app)
+        self._advance(45)
+        released = self._session("WAITING", bg=0, state="waiting")
+        self._tick(app, [released])
+        self.assertEqual(len(app.notifications), 1)
+        self._tick(app, [released])   # further tick: nothing more
+        self.assertEqual(len(app.notifications), 1)
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "sent")
+        self.assertEqual(records[-1]["reason"], "gate_cleared")
+        self.assertIn("held_sec", records[-1])
+        self.assertGreaterEqual(records[-1]["held_sec"], 45)
+
+    def test_self_resume_still_discards_the_hold(self):
+        """D-02, unchanged: the session coming back WORKING on its own
+        discards the held notification — zero sends, one
+        suppressed/session_resumed record."""
+        app = self._fake_app()
+        self._arm(app)
+        self._tick(app, [self._session("WORKING")])
+        self.assertEqual(app.notifications, [])
+        self.assertEqual(app._pending_notify, {})
+        self.assertEqual(app._notify_hold, {})
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "suppressed")
+        self.assertEqual(records[-1]["reason"], "session_resumed")
+
+    def test_max_hold_still_expires_past_the_cap(self):
+        """D-02, unchanged: NOTIFY_GATE_MAX_HOLD_SEC still caps a hold that
+        is never released — dropped, not fired."""
+        app = self._fake_app()
+        waiting = self._arm(app)
+        self._advance(monitor.NOTIFY_GATE_MAX_HOLD_SEC + 5)
+        self._tick(app, [waiting])   # expire
+        self.assertEqual(app.notifications, [])
+        self.assertEqual(app._pending_notify, {})
+        self.assertEqual(app._notify_hold, {})
+        records = self._read_records()
+        self.assertEqual(records[-1]["outcome"], "suppressed")
+        self.assertEqual(records[-1]["reason"], "hold_expired")
+
+
+class Goal30b_IdlePingDiskReplay(StateFileTestBase):
+    """End-to-end replay from disk, in Goal25b's style: the real
+    2026-08-17 11:50:24Z session from notifications.log, written as a state
+    file exactly as a post-fix idle ping now leaves it (untouched), read
+    back through scan_state_files() and refused by gate_notification()."""
+
+    def test_20260817_session_stays_refused_on_background_tasks(self):
+        self._write_state("34518633", state="waiting", last_event="Stop",
+                           background_tasks_count=1, hostname="2340e510e2ef",
+                           cwd="/workspace/cloudrun-jobs")
+        sessions = monitor.scan_state_files(
+            sessionid_to_label={"34518633": "yunoai"})
+        [session] = sessions
+        self.assertEqual(session["status"], "WAITING")
+        self.assertEqual(session["background_tasks_count"], 1)
+        allowed, reason, _ = monitor.gate_notification(session, sessions)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "background_tasks")
 
 
 class Goal28_LocalSwitchMutesAudioOnly(unittest.TestCase):
@@ -3106,6 +3287,283 @@ class Goal29_SavedGeometrySurvivesSecondaryScreen(unittest.TestCase):
         app = self._fake_app()
         geom = "300x200+-1800+100"
         self.assertEqual(monitor.MonitorApp._sanitize_geometry(app, geom), "DEFAULT")
+
+
+# ---------------------------------------------------------------------------
+# GOAL 31 — host on every notification title, one build site, both channels
+# (phase 04-notification-truth plan 04-02, D-03, NOTIF-03).
+# ---------------------------------------------------------------------------
+
+class Goal31_NotificationHostLabel(unittest.TestCase):
+    """The host joins every "Claude ready" title — toast and Telegram alike,
+    for local sessions today and remote ones once phase 5 plugs
+    `origin_host` — built in `notification_text()` and nowhere else. Sent
+    AND suppressed notifications.log records carry the identical title
+    string, character for character, plus a `host` field."""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self._orig_log = monitor.NOTIFICATIONS_LOG
+        monitor.NOTIFICATIONS_LOG = Path(self._tmp.name) / "notifications.log"
+        self._orig_config_file = monitor.CONFIG_FILE
+        monitor.CONFIG_FILE = Path(self._tmp.name) / "cfg.json"
+        self._now = [1_700_000_000.0]
+        self._time_patch = mock.patch.object(
+            monitor.time, "time", side_effect=lambda: self._now[0])
+        self._time_patch.start()
+
+    def tearDown(self) -> None:
+        self._time_patch.stop()
+        monitor.NOTIFICATIONS_LOG = self._orig_log
+        monitor.CONFIG_FILE = self._orig_config_file
+        self._tmp.cleanup()
+
+    def _read_records(self) -> list[dict]:
+        if not monitor.NOTIFICATIONS_LOG.exists():
+            return []
+        return [json.loads(line) for line in
+                monitor.NOTIFICATIONS_LOG.read_text(encoding="utf-8").splitlines()]
+
+    # -- notification_text(): the single build site --------------------
+
+    def test_text_with_host_appends_at_host(self):
+        title, body = monitor.notification_text("nursy", 65, "", "macbook-devbox")
+        self.assertEqual(title, "Claude ready — nursy @ macbook-devbox")
+        self.assertIn("1m 5s", body)
+
+    def test_text_with_alias_and_host_composes_both(self):
+        # The alias disambiguates two sessions, the host disambiguates two
+        # machines — both survive together, alias first, host last.
+        title, _ = monitor.notification_text("nursy", 65, "prod", "macbook-devbox")
+        self.assertEqual(title, "Claude ready — nursy · prod @ macbook-devbox")
+
+    def test_text_with_empty_host_is_byte_identical_to_pre_phase4(self):
+        # Compatibility proof: Goal26's no-host calls stay green untouched
+        # (see Goal26_NotificationsLog.test_notification_text_matches_...),
+        # this pins the same guarantee from the host-aware signature's side.
+        title, _ = monitor.notification_text("nursy", 65, "")
+        self.assertEqual(title, "Claude ready — nursy")
+        self.assertNotIn("@", title)
+        title_alias, _ = monitor.notification_text("nursy", 65, "prod")
+        self.assertEqual(title_alias, "Claude ready — nursy · prod")
+        self.assertNotIn("@", title_alias)
+
+    # -- local_machine_name() precedence --------------------------------
+
+    def test_local_machine_name_prefers_config_machine_name(self):
+        with mock.patch.dict(
+                os.environ,
+                {"COMPUTERNAME": "PCWIN", "HOSTNAME": "deadbeef1234"}):
+            self.assertEqual(
+                monitor.local_machine_name({"machine_name": "  matteo  "}),
+                "matteo")
+
+    def test_local_machine_name_falls_back_to_computername(self):
+        with mock.patch.dict(
+                os.environ,
+                {"COMPUTERNAME": "PCWIN", "HOSTNAME": "deadbeef1234"}):
+            self.assertEqual(monitor.local_machine_name({"machine_name": ""}), "PCWIN")
+            self.assertEqual(monitor.local_machine_name(None), "PCWIN")
+
+    def test_local_machine_name_falls_back_to_gethostname_first_segment(self):
+        env = dict(os.environ)
+        env.pop("COMPUTERNAME", None)
+        env["HOSTNAME"] = "deadbeef1234"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(
+                    monitor.socket, "gethostname", return_value="matteo.local"):
+                self.assertEqual(monitor.local_machine_name({}), "matteo")
+
+    def test_local_machine_name_never_reads_hostname_env_var(self):
+        """The trap this whole phase exists to avoid: inside a container
+        HOSTNAME is the container id, and this suite itself runs in one —
+        if local_machine_name() ever read it, this test would return the
+        fake container id below instead of the gethostname() stub."""
+        env = dict(os.environ)
+        env.pop("COMPUTERNAME", None)
+        env["HOSTNAME"] = "8d5f9694f1de"  # shape of a real container id
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(
+                    monitor.socket, "gethostname", return_value="matteo-pc"):
+                self.assertEqual(monitor.local_machine_name({}), "matteo-pc")
+
+    def test_local_machine_name_all_sources_empty_returns_empty_string(self):
+        env = dict(os.environ)
+        env.pop("COMPUTERNAME", None)
+        env.pop("HOSTNAME", None)
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(monitor.socket, "gethostname", return_value=""):
+                self.assertEqual(monitor.local_machine_name({}), "")
+                self.assertEqual(monitor.local_machine_name(None), "")
+
+    # -- notification_host(): the phase-5 seam --------------------------
+
+    def test_notification_host_prefers_origin_host(self):
+        self.assertEqual(
+            monitor.notification_host({"origin_host": "macbook-devbox"}, "matteo"),
+            "macbook-devbox")
+
+    def test_notification_host_falls_back_to_local_name_when_absent(self):
+        # Every session dict this phase produces — no writer sets origin_host.
+        self.assertEqual(monitor.notification_host({}, "matteo"), "matteo")
+
+    def test_notification_host_falls_back_on_non_string_or_blank_origin(self):
+        self.assertEqual(monitor.notification_host({"origin_host": ""}, "matteo"), "matteo")
+        self.assertEqual(monitor.notification_host({"origin_host": "   "}, "matteo"), "matteo")
+        self.assertEqual(monitor.notification_host({"origin_host": 123}, "matteo"), "matteo")
+        self.assertEqual(monitor.notification_host({"origin_host": None}, "matteo"), "matteo")
+
+    def test_notification_host_sanitises_control_chars_and_caps_length(self):
+        # T-04-05: a newline could inject extra lines into a Telegram
+        # message; the cap stops a pathological value unbounding a toast.
+        malicious = "evil\nInjected: line\r\x07" + ("x" * 50)
+        result = monitor.notification_host({"origin_host": malicious}, "matteo")
+        self.assertNotIn("\n", result)
+        self.assertNotIn("\r", result)
+        self.assertLessEqual(len(result), 32)
+
+    # -- both channels, via the real MonitorApp._notify ------------------
+
+    def test_both_channels_carry_the_same_host_title(self):
+        # NOTIF-03 acceptance in one assertion pair: Goal28's Fake drives
+        # the REAL MonitorApp._notify, capturing both calls["toast"] and
+        # calls["telegram"] — both must carry the identical host-suffixed
+        # title from the one build site.
+        app = Goal28_LocalSwitchMutesAudioOnly()._fake_app(local=True, telegram=True)
+        monitor.MonitorApp._notify(app, "nursy", 600, key=None, host="matteo")
+        expected_title = "Claude ready — nursy @ matteo"
+        self.assertEqual(app.calls["toast"][0][0], expected_title)
+        self.assertEqual(app.calls["telegram"][0][0], expected_title)
+
+    # -- single build site: patched notification_text reaches both paths -
+
+    def test_single_build_site_stubbed_title_reaches_notify_and_log(self):
+        """Patch monitor.notification_text with a sentinel, drive a full
+        send through _check_transitions with a Goal27-shaped Fake whose
+        `_notify` is the REAL MonitorApp._notify (not a stub) — so the
+        toast capture AND the logged record both come from the same patched
+        build site, proving neither path composes a title independently."""
+        calls: dict[str, list] = {"toast": []}
+
+        class Fake:
+            def __init__(self):
+                self._prev_status = {}
+                self._working_since = {}
+                self._pending_notify = {}
+                self._notify_hold = {}
+                self._session_aliases = {}
+                self.config = {"group_gate": True, "local": False, "telegram": False}
+
+            def _alias_key(self, key):
+                return key
+
+            def _dismiss_session_toast(self, key):
+                pass
+
+            def _notify_toast(self, title, body, key=None):
+                calls["toast"].append(title)
+                return True
+
+            def _notify_audio(self):
+                return (False, "muted")
+
+            def _flash_taskbar(self):
+                return False
+
+            def _send_telegram(self, title, body):
+                pass
+
+            _notify = monitor.MonitorApp._notify
+
+        app = Fake()
+        session = {"key": "k1", "session_id": "k1", "name": "nursy",
+                   "cwd": "/workspace", "hostname": "abc123",
+                   "state": "waiting", "background_tasks_count": 0}
+        with mock.patch.object(
+                monitor, "notification_text",
+                return_value=("SENTINEL TITLE", "SENTINEL BODY")):
+            monitor.MonitorApp._check_transitions(app, [dict(session, status="WORKING")])
+            app._working_since["k1"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+            waiting = dict(session, status="WAITING")
+            monitor.MonitorApp._check_transitions(app, [waiting])   # arm
+            monitor.MonitorApp._check_transitions(app, [waiting])   # send
+        self.assertEqual(calls["toast"], ["SENTINEL TITLE"])
+        records = self._read_records()
+        self.assertEqual(records[-1]["title"], "SENTINEL TITLE")
+
+    # -- log parity: the sent record's title/host match what was shown --
+
+    def test_log_parity_sent_record_carries_host_field_and_title(self):
+        gate = Goal27_NotificationGateWiring()
+        app = gate._fake_app()
+        app.config["machine_name"] = "matteo"
+        gate._tick(app, [gate._me("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        waiting = gate._me("WAITING", bg=0)
+        gate._tick(app, [waiting])   # arm
+        gate._tick(app, [waiting])   # send
+        records = gate._read_records()
+        sent = [r for r in records if r["outcome"] == "sent"][-1]
+        self.assertIn("@ matteo", sent["title"])
+        self.assertEqual(sent["host"], "matteo")
+
+    # -- suppressed decisions carry the host too --------------------------
+
+    def test_suppressed_hold_open_record_carries_host(self):
+        gate = Goal27_NotificationGateWiring()
+        app = gate._fake_app()
+        app.config["machine_name"] = "matteo"
+        gate._tick(app, [gate._me("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        waiting = gate._me("WAITING", bg=1)
+        gate._tick(app, [waiting])   # arm
+        gate._tick(app, [waiting])   # hold opens, logged
+        records = gate._read_records()
+        hold_rec = [r for r in records if r["reason"] == "background_tasks"][-1]
+        self.assertIn("@ matteo", hold_rec["title"])
+        self.assertEqual(hold_rec["host"], "matteo")
+
+    def test_suppressed_session_resumed_record_carries_host(self):
+        gate = Goal27_NotificationGateWiring()
+        app = gate._fake_app()
+        app.config["machine_name"] = "matteo"
+        gate._tick(app, [gate._me("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        waiting = gate._me("WAITING", bg=1)
+        gate._tick(app, [waiting])   # arm
+        gate._tick(app, [waiting])   # hold opens
+        gate._tick(app, [gate._me("WORKING")])   # self-resume discards hold
+        records = gate._read_records()
+        resumed = [r for r in records if r["reason"] == "session_resumed"][-1]
+        self.assertIn("@ matteo", resumed["title"])
+        self.assertEqual(resumed["host"], "matteo")
+
+    def test_suppressed_session_gone_record_carries_host_from_hold_snapshot(self):
+        gate = Goal27_NotificationGateWiring()
+        app = gate._fake_app()
+        app.config["machine_name"] = "matteo"
+        gate._tick(app, [gate._me("WORKING")])
+        app._working_since["6fff7d17"] -= monitor.NOTIFY_MIN_WORK_SEC + 5
+        waiting = gate._me("WAITING", bg=1)
+        gate._tick(app, [waiting])   # arm
+        gate._tick(app, [waiting])   # hold opens
+        gate._tick(app, [])          # session vanishes
+        records = gate._read_records()
+        gone = [r for r in records if r["reason"] == "session_gone"][-1]
+        self.assertIn("@ matteo", gone["title"])
+        self.assertEqual(gone["host"], "matteo")
+
+    # -- load_config round-trip: machine_name survives DEFAULT_CONFIG ----
+
+    def test_machine_name_survives_load_config_round_trip(self):
+        cfg = monitor.load_config()
+        cfg["machine_name"] = "matteo"
+        monitor.save_config(cfg)
+        self.assertEqual(monitor.load_config()["machine_name"], "matteo")
+
+    def test_machine_name_non_string_value_normalises_to_empty(self):
+        monitor.CONFIG_FILE.write_text('{"machine_name": 5}', encoding="utf-8")
+        self.assertEqual(monitor.load_config()["machine_name"], "")
 
 
 if __name__ == "__main__":

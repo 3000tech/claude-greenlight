@@ -18,7 +18,7 @@ v1.0 made hooks the primary source of session state. v1.1 makes the *notificatio
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 4: Notification Truth** - Notifications fire only when the user is genuinely needed, and every one names the host it came from
+- [x] **Phase 4: Notification Truth** - Notifications fire only when the user is genuinely needed, and every one names the host it came from
 - [ ] **Phase 5: Devbox Sessions on the PC Overlay** - The PC overlay shows tailnet-remote sessions with honest staleness and exactly one notification owner per session
 - [ ] **Phase 6: Phone Access & Devbox Rollout** - A read-only panel reachable from the phone over the tailnet, and the devbox installation in its final documented state
 
@@ -36,7 +36,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Every notification title carries its origin host on both channels — toast and Telegram — e.g. "Claude ready — nursy @ macbook-devbox", for local sessions as well as remote ones, and `notifications.log` records the same string the user saw.
   4. On the real Windows + devbox setup, a full overnight run produces zero illegitimate notifications while real permission prompts still page immediately (user-assisted UAT runbook authored in-phase, performed live).
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [x] 04-01-PLAN.md — idle_prompt stops writing needs_input at the source, and the background-tasks hold stops leaking (NOTIF-01, NOTIF-02)
+- [x] 04-02-PLAN.md — origin host on every notification title, toast and Telegram, from one build site; README + live UAT runbook (NOTIF-03)
 
 ### Phase 5: Devbox Sessions on the PC Overlay
 
@@ -75,7 +79,7 @@ Phases execute in numeric order: 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 4. Notification Truth | 0/TBD | Not started | - |
+| 4. Notification Truth | 2/2 | Complete | 2026-08-20 |
 | 5. Devbox Sessions on the PC Overlay | 0/TBD | Not started | - |
 | 6. Phone Access & Devbox Rollout | 0/TBD | Not started | - |
 

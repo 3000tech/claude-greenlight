@@ -214,6 +214,10 @@ DEFAULT_CONFIG = {
     # ALIAS_HOST_PREFIX) when resolvable, or today's row key otherwise. See
     # derive_alias_key(). Pruned at startup once the container is gone.
     "aliases": {},
+    # Overrides the machine name shown in notification titles (D-03,
+    # phase 04-notification-truth). Empty means local_machine_name() falls
+    # through to COMPUTERNAME / socket.gethostname().
+    "machine_name": "",
 }
 
 
@@ -238,6 +242,8 @@ def load_config() -> dict:
         cfg["local"] = True
     if not isinstance(cfg["telegram"], bool):
         cfg["telegram"] = True
+    if not isinstance(cfg["machine_name"], str):
+        cfg["machine_name"] = ""
     # Always rebuild aliases into a fresh, sanitised dict — never share the
     # DEFAULT_CONFIG instance (mutable-default trap), and drop any non-string
     # or blank entries a hand-edited config might carry.
@@ -1442,7 +1448,61 @@ def _group_gate_enabled(app) -> bool:
     return bool(config.get("group_gate", True))
 
 
-def notification_text(label: str, elapsed_sec: int, alias: str = "") -> tuple[str, str]:
+def local_machine_name(config: dict | None) -> str:
+    """Resolve a friendly label for the machine THIS monitor runs on
+    (D-03, phase 04-notification-truth): prefer a non-empty `machine_name`
+    from `config`, then the `COMPUTERNAME` environment variable, then the
+    first dot-separated segment of `socket.gethostname()`.
+
+    Deliberately never reads the `HOSTNAME` environment variable. Inside a
+    container `HOSTNAME` is the container id, not a machine name — and this
+    project runs inside a container on every machine it's deployed to
+    today. Reading it would put a container id in every notification title,
+    exactly the confusion D-03 exists to remove.
+
+    Returns "" if every source is empty/absent; callers treat a blank
+    result as "no host to show" (today's pre-phase-4 title, unchanged).
+    """
+    if isinstance(config, dict):
+        cfg_name = config.get("machine_name")
+        if isinstance(cfg_name, str) and cfg_name.strip():
+            return cfg_name.strip()
+    computername = os.environ.get("COMPUTERNAME", "")
+    if computername.strip():
+        return computername.strip()
+    hostname = socket.gethostname()
+    if hostname:
+        return hostname.split(".")[0]
+    return ""
+
+
+def notification_host(session: dict, local_name: str) -> str:
+    """Resolve the host label for one session's notification (D-03).
+
+    `origin_host` on the session dict is the seam phase 5 (remote/devbox
+    sessions) plugs a real remote machine name into — nothing writes it
+    today, so every session this phase produces resolves to `local_name`.
+    A non-string or blank `origin_host` falls back to `local_name` too.
+
+    Sanitises whatever it returns (T-04-05): strips control characters and
+    newlines, then caps the result at 32 characters, so neither a crafted
+    `origin_host` nor a pathological `machine_name` config value can inject
+    extra lines into a Telegram message or unbound a toast title.
+    """
+    def _clean(value) -> str:
+        if not isinstance(value, str):
+            return ""
+        return re.sub(r"[\x00-\x1f\x7f]", "", value).strip()[:32]
+
+    # Sanitise BEFORE the blank-check (WR-02): an origin_host made only of
+    # control characters must fall back to local_name, not win the pick and
+    # then sanitise down to an empty host.
+    origin = _clean(session.get("origin_host")) if isinstance(session, dict) else ""
+    return origin or _clean(local_name)
+
+
+def notification_text(label: str, elapsed_sec: int, alias: str = "",
+                       host: str = "") -> tuple[str, str]:
     """Compose the toast title/body pair for a "Claude ready" notification
     (quick-260807-iz2): the SINGLE place this text is built, so `_notify()`
     (what the user sees) and `notification_record()` (what gets logged) are
@@ -1453,12 +1513,16 @@ def notification_text(label: str, elapsed_sec: int, alias: str = "") -> tuple[st
     including the minutes/seconds humanisation (no "0m" prefix under a
     minute) and the alias suffix (appended only when `alias` is non-empty,
     so two sessions sharing a project label — e.g. two `yunoai-france` — are
-    still tellable apart).
+    still tellable apart). `host`, added for D-03, appends ` @ {host}` after
+    the label/alias when non-empty; an empty host (the default) leaves the
+    title byte-identical to before this phase.
     """
     mins, secs = divmod(elapsed_sec, 60)
     elapsed_human = f"{mins}m {secs}s" if mins else f"{secs}s"
     shown = f"{label} · {alias}" if alias else label
     toast_title = f"Claude ready — {shown}"
+    if host:
+        toast_title = f"{toast_title} @ {host}"
     toast_body = f"Waiting for your input after {elapsed_human} of work."
     return toast_title, toast_body
 
@@ -1479,7 +1543,7 @@ def notification_type(state) -> str:
 
 
 def notification_record(s: dict, elapsed_sec: int, alias: str, outcome: str,
-                         reason: str, **extra) -> dict:
+                         reason: str, host: str = "", **extra) -> dict:
     """Build the flat dict logged for one notification decision — sent or
     suppressed (quick-260807-iz2).
 
@@ -1487,14 +1551,18 @@ def notification_record(s: dict, elapsed_sec: int, alias: str, outcome: str,
     explicit allow-list is what keeps prompt/tool/jsonl content out of
     notifications.log (T-iz2-01, T-02-17 precedent): the only free text in
     the record is the monitor-COMPOSED title/body from notification_text()
-    (project label + alias + elapsed time), never anything a session itself
-    produced. `**extra` lets callers attach hold/gate bookkeeping
+    (project label + alias + elapsed time + host), never anything a session
+    itself produced. `**extra` lets callers attach hold/gate bookkeeping
     (held_sec, blocked_by, group detail) without this function needing to
     know about hold state.
+
+    `host` (D-03) is a declared parameter, never an item arriving through
+    `**extra` — `**extra` merges straight into the record and would land
+    the value in the log without ever reaching the title built below.
     """
     now = time.time()
     label = session_display_text(s)
-    title, body = notification_text(label, elapsed_sec, alias)
+    title, body = notification_text(label, elapsed_sec, alias, host)
     record = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "ts_ms": int(now * 1000),
@@ -1510,6 +1578,7 @@ def notification_record(s: dict, elapsed_sec: int, alias: str, outcome: str,
         "body": body,
         "elapsed_sec": elapsed_sec,
         "background_tasks_count": s.get("background_tasks_count"),
+        "host": host,
         "outcome": outcome,
         "reason": reason,
     }
@@ -2229,6 +2298,13 @@ class MonitorApp:
         notifications.log over one stuck episode.
         """
         now = time.time()
+        # Resolved once per tick (D-03) — every session on this pass shares
+        # the same local machine, so there is no reason to re-resolve
+        # config/env/gethostname() per session. Read defensively, exactly as
+        # _group_gate_enabled reads config: this method is exercised in
+        # tests via MonitorApp._check_transitions(fake, ...) where `fake` is
+        # a bare double that may not carry a real `config`.
+        local_name = local_machine_name(getattr(self, "config", None))
         seen: set[str] = set()
         for s in sessions:
             key = s["key"]
@@ -2248,9 +2324,10 @@ class MonitorApp:
                 if hold is not None:
                     held_sec = int(now - hold["opened_at"])
                     alias = self._session_aliases.get(self._alias_key(key), "")
+                    host = notification_host(s, local_name)
                     log_notification(notification_record(
                         s, elapsed if elapsed is not None else 0, alias,
-                        "suppressed", "session_resumed", held_sec=held_sec))
+                        "suppressed", "session_resumed", host=host, held_sec=held_sec))
             else:  # WAITING
                 if prev == "WORKING":
                     started = self._working_since.pop(key, None)
@@ -2264,6 +2341,7 @@ class MonitorApp:
                         allowed, reason, detail = gate_notification(s, sessions)
                     hold = self._notify_hold.get(key)
                     alias = self._session_aliases.get(self._alias_key(key), "")
+                    host = notification_host(s, local_name)
                     if allowed:
                         # RELEASE (hold was open) or a plain, never-held send.
                         held_sec = None
@@ -2271,11 +2349,11 @@ class MonitorApp:
                             held_sec = int(now - hold["opened_at"])
                             del self._notify_hold[key]
                         del self._pending_notify[key]
-                        self._notify(session_display_text(s), elapsed, key=key)
+                        self._notify(session_display_text(s), elapsed, key=key, host=host)
                         extra = {"held_sec": held_sec} if held_sec is not None else {}
                         log_notification(notification_record(
                             s, elapsed, alias, "sent",
-                            "gate_cleared" if held_sec is not None else "", **extra))
+                            "gate_cleared" if held_sec is not None else "", host=host, **extra))
                     elif hold is not None and (now - hold["opened_at"]) >= NOTIFY_GATE_MAX_HOLD_SEC:
                         # EXPIRE: dropped, not fired — the overlay keeps showing
                         # the session green regardless, so nothing is lost, just
@@ -2285,16 +2363,17 @@ class MonitorApp:
                         del self._notify_hold[key]
                         log_notification(notification_record(
                             s, elapsed, alias, "suppressed", "hold_expired",
-                            held_sec=held_sec))
+                            host=host, held_sec=held_sec))
                     elif hold is None:
                         # Hold OPENS: log once now, snapshot for a possible
                         # future vanish (the session dict won't exist then).
                         self._notify_hold[key] = {
                             "opened_at": now, "reason": reason,
                             "snapshot": dict(s), "elapsed": elapsed, "alias": alias,
+                            "host": host,
                         }
                         log_notification(notification_record(
-                            s, elapsed, alias, "suppressed", reason, **detail))
+                            s, elapsed, alias, "suppressed", reason, host=host, **detail))
                     elif hold.get("reason") != reason:
                         # Reason CHANGED mid-hold (e.g. background_tasks ->
                         # group_working): log once for the new reason, refresh
@@ -2303,8 +2382,9 @@ class MonitorApp:
                         hold["snapshot"] = dict(s)
                         hold["elapsed"] = elapsed
                         hold["alias"] = alias
+                        hold["host"] = host
                         log_notification(notification_record(
-                            s, elapsed, alias, "suppressed", reason, **detail))
+                            s, elapsed, alias, "suppressed", reason, host=host, **detail))
                     # else: hold persists with the same reason this tick —
                     # already logged when it opened, nothing new to record.
             self._prev_status[key] = curr
@@ -2317,14 +2397,17 @@ class MonitorApp:
                 hold = self._notify_hold.pop(key, None)
                 if hold is not None:
                     # DISCARD on vanish, built from the hold's own snapshot —
-                    # `sessions` no longer carries this session's dict.
+                    # `sessions` no longer carries this session's dict, so the
+                    # host resolved when the hold opened/changed is the only
+                    # source left (D-03).
                     held_sec = int(now - hold["opened_at"])
                     snapshot = hold.get("snapshot") or {"key": key}
                     snap_elapsed = hold.get("elapsed", elapsed if elapsed is not None else 0)
                     snap_alias = hold.get("alias", "")
+                    snap_host = hold.get("host", "")
                     log_notification(notification_record(
                         snapshot, snap_elapsed, snap_alias,
-                        "suppressed", "session_gone", held_sec=held_sec))
+                        "suppressed", "session_gone", host=snap_host, held_sec=held_sec))
                 self._dismiss_session_toast(key)
 
     def _notify_toast(self, title: str, message: str, key: str | None = None) -> bool:
@@ -2549,7 +2632,8 @@ class MonitorApp:
                     print(f"[notify] FlashWindowEx failed: {e}", file=sys.stderr)
         return flash_ok
 
-    def _notify(self, label: str, elapsed_sec: int, key: str | None = None) -> None:
+    def _notify(self, label: str, elapsed_sec: int, key: str | None = None,
+                host: str = "") -> None:
         """Toast + audio beep + taskbar flash when a long-running session is ready for user input.
 
         Three independent gates: "local" mutes audio only on this machine —
@@ -2557,13 +2641,17 @@ class MonitorApp:
         (quick-260818-bfm narrowed the switch's reach) — and "telegram"
         governs the phone push. Any one of the three can be silenced
         without affecting the other two.
+
+        `host` (D-03) is passed straight through to `notification_text()` —
+        this is the single build site, so both the toast and the Telegram
+        push below inherit the same title for free.
         """
         verbose = "--test-notify" in sys.argv
         local_on = bool(self.config.get("local", True))
         # Append the user's per-session alias when set, so two sessions sharing
         # a project name (e.g. two `yunoai-france`) are still tellable apart.
         alias = self._session_aliases.get(self._alias_key(key), "") if key else ""
-        toast_title, toast_body = notification_text(label, elapsed_sec, alias)
+        toast_title, toast_body = notification_text(label, elapsed_sec, alias, host)
         # Telegram fires regardless of the local switch — the whole point of the
         # phone push is to reach you when you're away from the desk (local muted).
         if self.config.get("telegram", True):
